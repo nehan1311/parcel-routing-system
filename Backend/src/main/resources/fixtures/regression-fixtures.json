@@ -1,0 +1,149 @@
+{
+  "insuranceThresholdEur": 1000,
+  "rules": [
+    {
+      "id": "heavy-department",
+      "priority": 10,
+      "condition": {
+        "field": "weight_kg",
+        "operator": "GT",
+        "value": 10
+      },
+      "department": "Heavy"
+    },
+    {
+      "id": "regular-department",
+      "priority": 20,
+      "condition": {
+        "field": "weight_kg",
+        "operator": "GT",
+        "value": 1
+      },
+      "department": "Regular"
+    },
+    {
+      "id": "mail-department",
+      "priority": 30,
+      "condition": {
+        "field": "weight_kg",
+        "operator": "LTE",
+        "value": 1
+      },
+      "department": "Mail"
+    }
+  ],
+  "cases": [
+    {
+      "name": "0.5 kg routes to Mail",
+      "parcel": {
+        "weightKg": 0.5,
+        "valueEur": 500,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Mail",
+        "matchedRuleId": "mail-department"
+      }
+    },
+    {
+      "name": "1.0 kg routes to Mail",
+      "parcel": {
+        "weightKg": 1.0,
+        "valueEur": 500,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Mail",
+        "matchedRuleId": "mail-department"
+      }
+    },
+    {
+      "name": "1.01 kg routes to Regular",
+      "parcel": {
+        "weightKg": 1.01,
+        "valueEur": 500,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Regular",
+        "matchedRuleId": "regular-department"
+      }
+    },
+    {
+      "name": "10.0 kg routes to Regular",
+      "parcel": {
+        "weightKg": 10.0,
+        "valueEur": 500,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Regular",
+        "matchedRuleId": "regular-department"
+      }
+    },
+    {
+      "name": "10.01 kg routes to Heavy",
+      "parcel": {
+        "weightKg": 10.01,
+        "valueEur": 500,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Heavy",
+        "matchedRuleId": "heavy-department"
+      }
+    },
+    {
+      "name": "1000 EUR does not require insurance",
+      "parcel": {
+        "weightKg": 15,
+        "valueEur": 1000,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": false,
+        "predictedDepartment": "Heavy",
+        "matchedRuleId": "heavy-department"
+      }
+    },
+    {
+      "name": "1000.01 EUR requires insurance",
+      "parcel": {
+        "weightKg": 15,
+        "valueEur": 1000.01,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": true,
+        "predictedDepartment": "Heavy",
+        "matchedRuleId": "heavy-department"
+      }
+    },
+    {
+      "name": "15 kg and 2000 EUR requires insurance and routes to Heavy",
+      "parcel": {
+        "weightKg": 15,
+        "valueEur": 2000,
+        "destinationCountry": "DE",
+        "attributes": {}
+      },
+      "expected": {
+        "insuranceRequired": true,
+        "predictedDepartment": "Heavy",
+        "matchedRuleId": "heavy-department"
+      }
+    }
+  ]
+}
