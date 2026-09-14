@@ -57,6 +57,28 @@ function Status({ value }) {
   return <span className={`status ${value?.toLowerCase()}`}>{value?.replaceAll("_", " ")}</span>;
 }
 
+function ParcelDetailsModal({ parcel, onClose }) {
+  return (
+    <div className="details-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="details-modal" role="dialog" aria-modal="true" aria-labelledby="parcel-details-title">
+        <div className="details-modal-header">
+          <div><p className="eyebrow">Routing details</p><h2 id="parcel-details-title">Parcel #{parcel.id}</h2></div>
+          <button className="secondary details-close" type="button" onClick={onClose} aria-label="Close parcel details">Close</button>
+        </div>
+        <dl className="parcel-details-grid">
+          <div><dt>Parcel ID</dt><dd>#{parcel.id}</dd></div>
+          <div><dt>Status</dt><dd><Status value={parcel.status} /></dd></div>
+          <div><dt>Department</dt><dd>{parcel.department ?? "Awaiting approval"}</dd></div>
+          <div><dt>Predicted department</dt><dd>{parcel.predictedDepartment ?? "—"}</dd></div>
+          <div><dt>Matched rule ID</dt><dd>{parcel.matchedRuleId ?? "—"}</dd></div>
+          <div><dt>Routing config version</dt><dd>{parcel.routingConfigVersionId ?? "—"}</dd></div>
+          <div><dt>Insurance required</dt><dd>{parcel.insuranceRequired ? "Yes" : "No"}</dd></div>
+        </dl>
+      </section>
+    </div>
+  );
+}
+
 function Toast({ type = "info", title, message, onClose }) {
   const icons = { success: "✓", error: "✕", info: "ℹ" };
   return (
@@ -209,6 +231,7 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
   const [batchSearch, setBatchSearch] = useState("");
   const [batchStatus, setBatchStatus] = useState("ALL");
   const [batchDept, setBatchDept]     = useState("ALL");
+  const [selectedOutcome, setSelectedOutcome] = useState(null);
 
   const batchOutcomes = batch?.createdParcels ?? [];
   const batchDepts = useMemo(() =>
@@ -229,9 +252,16 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
   const pageCount   = Math.max(1, Math.ceil(filtered.length / 20));
   const visibleRows = useMemo(() => filtered.slice((batchPage - 1) * 20, batchPage * 20), [filtered, batchPage]);
 
+  useEffect(() => {
+    if (!selectedOutcome) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") setSelectedOutcome(null); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedOutcome]);
+
   async function sendBatch(e) {
     e.preventDefault();
-    setToast(null); setBatch(null); setBatchPage(1); setBatchSearch(""); setBatchStatus("ALL"); setBatchDept("ALL");
+    setToast(null); setBatch(null); setSelectedOutcome(null); setBatchPage(1); setBatchSearch(""); setBatchStatus("ALL"); setBatchDept("ALL");
     if (!file || !/\.(json|xml)$/i.test(file.name))
       return setToast({ type: "error", message: "Choose a .json or .xml batch file." });
     setBusy(true);
@@ -319,7 +349,7 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
                       <tr>
                         <th>Parcel ID</th><th>Status</th><th>Department</th>
                         <th>Predicted Dept.</th><th>Matched Rule</th>
-                        <th>Config Ver.</th><th>Insurance</th>
+                        <th>Config Ver.</th><th>Insurance</th><th><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -332,10 +362,11 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
                           <td data-label="Matched Rule">{row.matchedRuleId}</td>
                           <td data-label="Config Ver.">{row.routingConfigVersionId}</td>
                           <td data-label="Insurance">{row.status === "PENDING_APPROVAL" ? <span className="insurance-flag">Required</span> : "No"}</td>
+                          <td data-label="Action"><button className="secondary details-button" type="button" onClick={() => setSelectedOutcome(row)}>View details</button></td>
                         </tr>
                       ))}
                       {visibleRows.length === 0 && (
-                        <tr><td className="batch-empty" colSpan="7">No outcomes match these filters.</td></tr>
+                        <tr><td className="batch-empty" colSpan="8">No outcomes match these filters.</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -363,6 +394,7 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
           </div>
         )}
       </section>
+      {selectedOutcome && <ParcelDetailsModal parcel={selectedOutcome} onClose={() => setSelectedOutcome(null)} />}
     </div>
   );
 }
