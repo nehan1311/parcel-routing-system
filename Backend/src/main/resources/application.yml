@@ -1,10 +1,12 @@
 spring:
   application:
     name: parcel-routing
+
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/parcel_routing}
-    username: ${SPRING_DATASOURCE_USERNAME:parcel}
-    password: ${SPRING_DATASOURCE_PASSWORD:parcel}
+    url: jdbc:postgresql://localhost:5432/parcel_routing
+    username: postgres
+    password: Neha@131105
+
   jpa:
     hibernate:
       ddl-auto: none
@@ -17,3 +19,10 @@ management:
     web:
       exposure:
         include: health,info
+
+parcel:
+  security:
+    # Local development credentials only. Override with PARCEL_*_PASSWORD variables.
+    operator-password: ${PARCEL_OPERATOR_PASSWORD:operator-local-only}
+    approver-password: ${PARCEL_APPROVER_PASSWORD:approver-local-only}
+    admin-password: ${PARCEL_ADMIN_PASSWORD:admin-local-only}
