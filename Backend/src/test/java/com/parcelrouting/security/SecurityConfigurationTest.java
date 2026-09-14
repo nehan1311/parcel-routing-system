@@ -3,6 +3,7 @@ package com.parcelrouting.security;
 import com.parcelrouting.config.ConfigService;
 import com.parcelrouting.parcel.Parcel;
 import com.parcelrouting.parcel.ParcelEntity;
+import com.parcelrouting.parcel.ParcelRepository;
 import com.parcelrouting.parcel.ParcelStatus;
 import com.parcelrouting.service.ParcelService;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,9 @@ class SecurityConfigurationTest {
 
     @MockBean
     private ConfigService configService;
+
+    @MockBean
+    private ParcelRepository parcelRepository;
 
     @Test
     void rejectsUnauthenticatedParcelSubmission() throws Exception {

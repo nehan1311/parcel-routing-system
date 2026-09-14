@@ -39,6 +39,18 @@ public class RoutingConfigVersion {
     @Column(name = "activated_at")
     private Instant activatedAt;
 
+    @Column(name = "activated_by")
+    private String activatedBy;
+
+    @Column(name = "dry_run_completed_at")
+    private Instant dryRunCompletedAt;
+
+    @Column(name = "dry_run_passed", nullable = false)
+    private boolean dryRunPassed;
+
+    @Column(name = "dry_run_rules_json", columnDefinition = "text")
+    private String dryRunRulesJson;
+
     @Column(name = "based_on_version_id")
     private Long basedOnVersionId;
 
@@ -91,7 +103,54 @@ public class RoutingConfigVersion {
         return activatedAt;
     }
 
+    public String getActivatedBy() {
+        return activatedBy;
+    }
+
+    public Instant getDryRunCompletedAt() {
+        return dryRunCompletedAt;
+    }
+
+    public boolean isDryRunPassed() {
+        return dryRunPassed;
+    }
+
+    public String getDryRunRulesJson() {
+        return dryRunRulesJson;
+    }
+
     public Long getBasedOnVersionId() {
         return basedOnVersionId;
+    }
+
+    public void recordDryRun(Instant completedAt, boolean passed) {
+        if (status != ConfigVersionStatus.DRAFT) {
+            throw new IllegalStateException("Only draft routing configurations may record a dry-run");
+        }
+        this.dryRunCompletedAt = completedAt;
+        this.dryRunPassed = passed;
+        this.dryRunRulesJson = rulesJson;
+    }
+
+    public boolean hasSuccessfulDryRunForCurrentConfiguration() {
+        return dryRunPassed
+                && dryRunCompletedAt != null
+                && rulesJson.equals(dryRunRulesJson);
+    }
+
+    public void archive() {
+        if (status != ConfigVersionStatus.ACTIVE) {
+            throw new IllegalStateException("Only active routing configurations may be archived");
+        }
+        this.status = ConfigVersionStatus.ARCHIVED;
+    }
+
+    public void activate(String activatedBy, Instant activatedAt) {
+        if (status != ConfigVersionStatus.DRAFT) {
+            throw new IllegalStateException("Only draft routing configurations may be activated");
+        }
+        this.status = ConfigVersionStatus.ACTIVE;
+        this.activatedBy = activatedBy;
+        this.activatedAt = activatedAt;
     }
 }

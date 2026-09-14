@@ -3,6 +3,9 @@ package com.parcelrouting.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.parcelrouting.routing.ComparisonOperator;
 import com.parcelrouting.routing.RoutingConfig;
+import com.parcelrouting.routing.DryRunSimulator;
+import com.parcelrouting.parcel.ParcelEntity;
+import com.parcelrouting.parcel.ParcelStatus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -12,12 +15,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ConfigServiceTest {
 
     private final RoutingConfigVersionRepository repository = mock(RoutingConfigVersionRepository.class);
-    private final ConfigService configService = new ConfigService(repository, new ObjectMapper());
+    private final DryRunSimulator dryRunSimulator = mock(DryRunSimulator.class);
+    private final ConfigService configService = new ConfigService(
+            repository, new ObjectMapper(), new ConfigValidator(), dryRunSimulator
+    );
 
     @Test
     void parsesActiveConfigurationIntoRoutingConfig() {
@@ -73,6 +82,204 @@ class ConfigServiceTest {
         assertTrue(exception.getMessage().contains("Unknown routing comparison operator: BETWEEN"));
     }
 
+    @Test
+    void createsValidDraftWithoutChangingActiveConfiguration() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        RoutingConfigVersion latest = new RoutingConfigVersion(
+                4, ConfigVersionStatus.ARCHIVED, "{}", "admin", Instant.now(), null, null
+        );
+        when(repository.findTopByOrderByVersionDesc()).thenReturn(java.util.Optional.of(latest));
+        when(repository.save(any(RoutingConfigVersion.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        RoutingConfigVersion draft = configService.createDraft(validConfig(), "admin");
+
+        assertEquals(ConfigVersionStatus.DRAFT, draft.getStatus());
+        assertEquals(5, draft.getVersion());
+        assertEquals("admin", draft.getCreatedBy());
+        assertTrue(draft.getCreatedAt().isBefore(Instant.now().plusSeconds(1)));
+        assertEquals(latest.getId(), draft.getBasedOnVersionId());
+        assertTrue(draft.getRulesJson().contains("heavy-department"));
+        assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
+        assertEquals(validConfigJson(), active.getRulesJson());
+        verify(repository).save(draft);
+        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
+    }
+
+    @Test
+    void rejectsInvalidDraftBeforeAccessingOrPersistingDatabaseState() {
+        RoutingConfig invalidConfig = new RoutingConfig(-1, List.of());
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> configService.createDraft(invalidConfig, "admin")
+        );
+
+        assertTrue(exception.getMessage().contains("Insurance threshold"));
+        verify(repository, never()).findTopByOrderByVersionDesc();
+        verify(repository, never()).save(any(RoutingConfigVersion.class));
+    }
+
+    @Test
+    void dryRunRecordsTheCurrentDraftConfigurationWithoutChangingActiveConfiguration() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        RoutingConfigVersion draft = new RoutingConfigVersion(
+                2, ConfigVersionStatus.DRAFT, validConfigJson(), "admin", Instant.now(), null, 1L
+        );
+        DryRunSimulator.DryRunResult result = new DryRunSimulator.DryRunResult(8, 8, 0, List.of());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(dryRunSimulator.simulate(any(RoutingConfig.class))).thenReturn(result);
+
+        assertEquals(result, configService.dryRun(2));
+
+        assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
+        assertEquals(validConfigJson(), active.getRulesJson());
+        assertTrue(draft.isDryRunPassed());
+        assertEquals(validConfigJson(), draft.getDryRunRulesJson());
+        verify(repository).save(draft);
+        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
+        verify(dryRunSimulator).simulate(any(RoutingConfig.class));
+    }
+
+    @Test
+    void dryRunRejectsMissingAndNonDraftVersions() {
+        when(repository.findByVersion(99)).thenReturn(java.util.Optional.empty());
+        assertThrows(ConfigVersionNotFoundException.class, () -> configService.dryRun(99));
+
+        when(repository.findByVersion(1)).thenReturn(java.util.Optional.of(activeVersion(validConfigJson())));
+        assertThrows(ConfigVersionStateException.class, () -> configService.dryRun(1));
+        verify(dryRunSimulator, never()).simulate(any(RoutingConfig.class));
+    }
+
+    @Test
+    void successfulDryRunActivatesDraftArchivesPreviousActiveAndKeepsParcelSnapshot() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        RoutingConfigVersion draft = draftVersion(2, alternateConfigJson());
+        ParcelEntity existingParcel = new ParcelEntity(
+                1, 100, "DE", "{}", ParcelStatus.ROUTED, "Mail", "Mail", "mail-department",
+                1L, Instant.now(), null, null
+        );
+        DryRunSimulator.DryRunResult passed = new DryRunSimulator.DryRunResult(8, 8, 0, List.of());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(dryRunSimulator.simulate(any(RoutingConfig.class))).thenReturn(passed);
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenAnswer(invocation -> List.of(active));
+        when(repository.save(draft)).thenReturn(draft);
+
+        configService.dryRun(2);
+        RoutingConfigVersion activated = configService.activate(2L, "admin");
+
+        assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
+        assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
+        assertEquals("admin", activated.getActivatedBy());
+        assertTrue(activated.getActivatedAt().isBefore(Instant.now().plusSeconds(1)));
+        assertEquals(alternateConfigJson(), activated.getRulesJson());
+        assertEquals(1L, existingParcel.getRoutingConfigVersionId());
+        assertEquals(1, List.of(active, draft).stream()
+                .filter(version -> version.getStatus() == ConfigVersionStatus.ACTIVE).count());
+        verify(repository).saveAll(List.of(active));
+        verify(repository).flush();
+    }
+
+    @Test
+    void activationWithoutSuccessfulDryRunOrWithFailedDryRunLeavesActiveUnchanged() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        RoutingConfigVersion draft = draftVersion(2, validConfigJson());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+
+        assertThrows(ConfigVersionActivationException.class, () -> configService.activate(2L, "admin"));
+        assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
+
+        when(dryRunSimulator.simulate(any(RoutingConfig.class)))
+                .thenReturn(new DryRunSimulator.DryRunResult(8, 7, 1, List.of()));
+        configService.dryRun(2);
+
+        assertThrows(ConfigVersionActivationException.class, () -> configService.activate(2L, "admin"));
+        assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
+        assertEquals(ConfigVersionStatus.DRAFT, draft.getStatus());
+        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
+    }
+
+    @Test
+    void activationRejectsMissingAndNonDraftVersions() {
+        when(repository.findByVersion(99)).thenReturn(java.util.Optional.empty());
+        assertThrows(ConfigVersionNotFoundException.class, () -> configService.activate(99L, "admin"));
+
+        when(repository.findByVersion(1)).thenReturn(java.util.Optional.of(activeVersion(validConfigJson())));
+        assertThrows(ConfigVersionStateException.class, () -> configService.activate(1L, "admin"));
+        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
+    }
+
+    @Test
+    void historyReturnsVersionsNewestFirstWithPredecessorRelationship() {
+        RoutingConfigVersion newest = draftVersion(3, validConfigJson());
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        when(repository.findAllByOrderByVersionDesc()).thenReturn(List.of(newest, active));
+
+        List<ConfigService.ConfigHistoryEntry> history = configService.history();
+
+        assertEquals(List.of(3, 1), history.stream().map(ConfigService.ConfigHistoryEntry::version).toList());
+        assertEquals(ConfigVersionStatus.DRAFT, history.getFirst().status());
+        assertEquals("admin", history.getFirst().createdBy());
+        assertEquals(newest.getBasedOnVersionId(), history.getFirst().predecessorVersionId());
+    }
+
+    @Test
+    void rollbackCreatesAndActivatesNewVersionWithoutChangingArchivedTargetOrParcelSnapshot() {
+        RoutingConfigVersion target = archivedVersion(2, alternateConfigJson());
+        setId(target, 22L);
+        RoutingConfigVersion currentActive = activeVersion(validConfigJson());
+        ParcelEntity existingParcel = new ParcelEntity(
+                2, 200, "DE", "{}", ParcelStatus.ROUTED, "Regular", "Regular", "regular-department",
+                1L, Instant.now(), null, null
+        );
+        DryRunSimulator.DryRunResult passed = new DryRunSimulator.DryRunResult(8, 8, 0, List.of());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(target));
+        when(repository.findTopByOrderByVersionDesc()).thenReturn(java.util.Optional.of(target));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(currentActive));
+        when(repository.save(any(RoutingConfigVersion.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(dryRunSimulator.simulate(any(RoutingConfig.class))).thenReturn(passed);
+
+        RoutingConfigVersion rollback = configService.rollback(2L, "admin");
+
+        assertEquals(3, rollback.getVersion());
+        assertEquals(ConfigVersionStatus.ACTIVE, rollback.getStatus());
+        assertEquals(alternateConfigJson(), rollback.getRulesJson());
+        assertEquals(22L, rollback.getBasedOnVersionId());
+        assertEquals("admin", rollback.getActivatedBy());
+        assertEquals(ConfigVersionStatus.ARCHIVED, target.getStatus());
+        assertEquals(alternateConfigJson(), target.getRulesJson());
+        assertEquals(ConfigVersionStatus.ARCHIVED, currentActive.getStatus());
+        assertEquals(1L, existingParcel.getRoutingConfigVersionId());
+        assertEquals(1, List.of(target, currentActive, rollback).stream()
+                .filter(configuration -> configuration.getStatus() == ConfigVersionStatus.ACTIVE).count());
+        verify(repository).saveAll(List.of(currentActive));
+        verify(repository).flush();
+    }
+
+    @Test
+    void failedRollbackLeavesCurrentActiveConfigurationUnchanged() {
+        RoutingConfigVersion target = archivedVersion(2, validConfigJson());
+        RoutingConfigVersion currentActive = activeVersion(alternateConfigJson());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(target));
+        when(repository.findTopByOrderByVersionDesc()).thenReturn(java.util.Optional.of(currentActive));
+        when(dryRunSimulator.simulate(any(RoutingConfig.class)))
+                .thenReturn(new DryRunSimulator.DryRunResult(8, 7, 1, List.of()));
+
+        assertThrows(ConfigVersionActivationException.class, () -> configService.rollback(2L, "admin"));
+
+        assertEquals(ConfigVersionStatus.ACTIVE, currentActive.getStatus());
+        assertEquals(ConfigVersionStatus.ARCHIVED, target.getStatus());
+        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
+    }
+
+    @Test
+    void rollbackRejectsMissingAndNonArchivedTargets() {
+        when(repository.findByVersion(99)).thenReturn(java.util.Optional.empty());
+        assertThrows(ConfigVersionNotFoundException.class, () -> configService.rollback(99L, "admin"));
+
+        when(repository.findByVersion(1)).thenReturn(java.util.Optional.of(activeVersion(validConfigJson())));
+        assertThrows(ConfigVersionRollbackException.class, () -> configService.rollback(1L, "admin"));
+    }
+
     private RoutingConfigVersion activeVersion(String rulesJson) {
         return new RoutingConfigVersion(
                 1,
@@ -125,5 +332,41 @@ class ConfigServiceTest {
                   ]
                 }
                 """;
+    }
+
+    private RoutingConfig validConfig() {
+        return new RoutingConfig(1000, List.of(
+                new com.parcelrouting.routing.Rule(
+                        "heavy-department", 10,
+                        new com.parcelrouting.routing.Condition("weight_kg", ComparisonOperator.GT, 10),
+                        "Heavy"
+                )
+        ));
+    }
+
+    private RoutingConfigVersion draftVersion(int version, String rulesJson) {
+        return new RoutingConfigVersion(
+                version, ConfigVersionStatus.DRAFT, rulesJson, "admin", Instant.now(), null, 1L
+        );
+    }
+
+    private RoutingConfigVersion archivedVersion(int version, String rulesJson) {
+        return new RoutingConfigVersion(
+                version, ConfigVersionStatus.ARCHIVED, rulesJson, "admin", Instant.now(), Instant.now(), 1L
+        );
+    }
+
+    private void setId(RoutingConfigVersion version, Long id) {
+        try {
+            java.lang.reflect.Field field = RoutingConfigVersion.class.getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(version, id);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    private String alternateConfigJson() {
+        return validConfigJson().replace("\"requiredAboveValueEur\": 1000", "\"requiredAboveValueEur\": 1500");
     }
 }

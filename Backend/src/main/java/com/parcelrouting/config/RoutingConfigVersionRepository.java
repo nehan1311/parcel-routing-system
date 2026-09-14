@@ -10,4 +10,8 @@ public interface RoutingConfigVersionRepository extends JpaRepository<RoutingCon
     List<RoutingConfigVersion> findByStatus(ConfigVersionStatus status);
 
     Optional<RoutingConfigVersion> findTopByOrderByVersionDesc();
+
+    Optional<RoutingConfigVersion> findByVersion(int version);
+
+    List<RoutingConfigVersion> findAllByOrderByVersionDesc();
 }

@@ -5,25 +5,181 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.parcelrouting.routing.ComparisonOperator;
 import com.parcelrouting.routing.Condition;
+import com.parcelrouting.routing.DryRunSimulator;
 import com.parcelrouting.routing.RoutingConfig;
 import com.parcelrouting.routing.Rule;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class ConfigService {
 
     private final RoutingConfigVersionRepository routingConfigVersionRepository;
     private final ObjectMapper objectMapper;
+    private final ConfigValidator configValidator;
+    private final DryRunSimulator dryRunSimulator;
 
     public ConfigService(
             RoutingConfigVersionRepository routingConfigVersionRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ConfigValidator configValidator,
+            DryRunSimulator dryRunSimulator
     ) {
         this.routingConfigVersionRepository = routingConfigVersionRepository;
         this.objectMapper = objectMapper;
+        this.configValidator = configValidator;
+        this.dryRunSimulator = dryRunSimulator;
+    }
+
+    @Transactional
+    public RoutingConfigVersion createDraft(RoutingConfig routingConfig, String createdBy) {
+        configValidator.validate(routingConfig);
+        if (createdBy == null || createdBy.isBlank()) {
+            throw new IllegalArgumentException("Draft creator must not be blank");
+        }
+
+        Optional<RoutingConfigVersion> latest = routingConfigVersionRepository.findTopByOrderByVersionDesc();
+        int nextVersion = latest.map(version -> version.getVersion() + 1).orElse(1);
+        Long basedOnVersionId = latest.map(RoutingConfigVersion::getId).orElse(null);
+
+        RoutingConfigVersion draft = new RoutingConfigVersion(
+                nextVersion,
+                ConfigVersionStatus.DRAFT,
+                serializeRoutingConfig(routingConfig),
+                createdBy,
+                Instant.now(),
+                null,
+                basedOnVersionId
+        );
+        return routingConfigVersionRepository.save(draft);
+    }
+
+    @Transactional(readOnly = true)
+    public DraftValidationResult validateDraft(int version) {
+        RoutingConfigVersion draft = routingConfigVersionRepository.findByVersion(version)
+                .orElseThrow(() -> new ConfigVersionNotFoundException(version));
+        if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
+            throw new ConfigVersionStateException(version);
+        }
+
+        try {
+            RoutingConfig routingConfig = parseRoutingConfig(draft.getRulesJson());
+            configValidator.validate(routingConfig);
+            return new DraftValidationResult(version, true, List.of());
+        } catch (IllegalStateException exception) {
+            throw new IllegalArgumentException("Draft configuration is invalid: " + exception.getMessage(), exception);
+        }
+    }
+
+    @Transactional
+    public DryRunSimulator.DryRunResult dryRun(int version) {
+        RoutingConfigVersion draft = routingConfigVersionRepository.findByVersion(version)
+                .orElseThrow(() -> new ConfigVersionNotFoundException(version));
+        if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
+            throw new ConfigVersionStateException(version);
+        }
+
+        DryRunSimulator.DryRunResult result = dryRunSimulator.simulate(parseRoutingConfig(draft.getRulesJson()));
+        draft.recordDryRun(Instant.now(), result.failedCases() == 0);
+        routingConfigVersionRepository.save(draft);
+        return result;
+    }
+
+    @Transactional
+    public RoutingConfigVersion activate(Long version, String activatedBy) {
+        if (version == null || version > Integer.MAX_VALUE || version < Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("Routing configuration version must be a valid integer");
+        }
+        if (activatedBy == null || activatedBy.isBlank()) {
+            throw new IllegalArgumentException("Configuration activator must not be blank");
+        }
+
+        RoutingConfigVersion draft = routingConfigVersionRepository.findByVersion(version.intValue())
+                .orElseThrow(() -> new ConfigVersionNotFoundException(version.intValue()));
+        return activateDraft(draft, activatedBy);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ConfigHistoryEntry> history() {
+        return routingConfigVersionRepository.findAllByOrderByVersionDesc().stream()
+                .map(version -> new ConfigHistoryEntry(
+                        version.getVersion(),
+                        version.getStatus(),
+                        version.getCreatedBy(),
+                        version.getCreatedAt(),
+                        version.getActivatedBy(),
+                        version.getActivatedAt(),
+                        version.getBasedOnVersionId()
+                ))
+                .toList();
+    }
+
+    @Transactional
+    public RoutingConfigVersion rollback(Long version, String activatedBy) {
+        if (version == null || version > Integer.MAX_VALUE || version < Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("Routing configuration version must be a valid integer");
+        }
+        if (activatedBy == null || activatedBy.isBlank()) {
+            throw new IllegalArgumentException("Configuration activator must not be blank");
+        }
+
+        int targetVersionNumber = version.intValue();
+        RoutingConfigVersion target = routingConfigVersionRepository.findByVersion(targetVersionNumber)
+                .orElseThrow(() -> new ConfigVersionNotFoundException(targetVersionNumber));
+        if (target.getStatus() != ConfigVersionStatus.ARCHIVED) {
+            throw new ConfigVersionRollbackException(targetVersionNumber, "only archived versions may be rollback targets");
+        }
+
+        RoutingConfig targetConfiguration;
+        try {
+            targetConfiguration = parseRoutingConfig(target.getRulesJson());
+            configValidator.validate(targetConfiguration);
+        } catch (IllegalStateException | IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                    "Rollback target configuration is invalid: " + exception.getMessage(), exception
+            );
+        }
+
+        Optional<RoutingConfigVersion> latest = routingConfigVersionRepository.findTopByOrderByVersionDesc();
+        RoutingConfigVersion rollbackDraft = new RoutingConfigVersion(
+                latest.map(existing -> existing.getVersion() + 1).orElse(1),
+                ConfigVersionStatus.DRAFT,
+                target.getRulesJson(),
+                activatedBy,
+                Instant.now(),
+                null,
+                target.getId()
+        );
+        DryRunSimulator.DryRunResult dryRunResult = dryRunSimulator.simulate(targetConfiguration);
+        rollbackDraft.recordDryRun(Instant.now(), dryRunResult.failedCases() == 0);
+
+        return activateDraft(rollbackDraft, activatedBy);
+    }
+
+    private RoutingConfigVersion activateDraft(RoutingConfigVersion draft, String activatedBy) {
+        if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
+            throw new ConfigVersionStateException(draft.getVersion());
+        }
+        if (!draft.hasSuccessfulDryRunForCurrentConfiguration()) {
+            throw new ConfigVersionActivationException(
+                    draft.getVersion(), "a successful dry-run for the current configuration is required"
+            );
+        }
+
+        List<RoutingConfigVersion> activeVersions = routingConfigVersionRepository.findByStatus(ConfigVersionStatus.ACTIVE);
+        for (RoutingConfigVersion activeVersion : activeVersions) {
+            activeVersion.archive();
+        }
+        routingConfigVersionRepository.saveAll(activeVersions);
+        routingConfigVersionRepository.flush();
+
+        draft.activate(activatedBy, Instant.now());
+        return routingConfigVersionRepository.save(draft);
     }
 
     public RoutingConfig getActiveConfig() {
@@ -77,6 +233,37 @@ public class ConfigService {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Malformed routing configuration JSON", exception);
         }
+    }
+
+    private String serializeRoutingConfig(RoutingConfig routingConfig) {
+        try {
+            return objectMapper.writeValueAsString(new RoutingConfigSnapshot(
+                    new InsuranceSnapshot(routingConfig.insuranceThresholdEur()),
+                    routingConfig.rules()
+            ));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Routing configuration could not be serialized", exception);
+        }
+    }
+
+    private record RoutingConfigSnapshot(InsuranceSnapshot insurance, List<Rule> rules) {
+    }
+
+    private record InsuranceSnapshot(int requiredAboveValueEur) {
+    }
+
+    public record DraftValidationResult(int version, boolean valid, List<String> errors) {
+    }
+
+    public record ConfigHistoryEntry(
+            int version,
+            ConfigVersionStatus status,
+            String createdBy,
+            Instant createdAt,
+            String activatedBy,
+            Instant activatedAt,
+            Long predecessorVersionId
+    ) {
     }
 
     private Rule parseRule(JsonNode ruleNode) throws JsonProcessingException {

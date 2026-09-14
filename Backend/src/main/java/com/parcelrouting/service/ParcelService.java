@@ -10,6 +10,7 @@ import com.parcelrouting.parcel.ParcelRepository;
 import com.parcelrouting.parcel.ParcelStatus;
 import com.parcelrouting.routing.RoutingDecision;
 import com.parcelrouting.routing.RoutingEngine;
+import com.parcelrouting.monitoring.RoutingDecisionLogger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,17 +23,20 @@ public class ParcelService {
     private final RoutingEngine routingEngine;
     private final ParcelRepository parcelRepository;
     private final ObjectMapper objectMapper;
+    private final RoutingDecisionLogger routingDecisionLogger;
 
     public ParcelService(
             ConfigService configService,
             RoutingEngine routingEngine,
             ParcelRepository parcelRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            RoutingDecisionLogger routingDecisionLogger
     ) {
         this.configService = configService;
         this.routingEngine = routingEngine;
         this.parcelRepository = parcelRepository;
         this.objectMapper = objectMapper;
+        this.routingDecisionLogger = routingDecisionLogger;
     }
 
     @Transactional
@@ -62,7 +66,9 @@ public class ParcelService {
                 null
         );
 
-        return parcelRepository.save(parcelEntity);
+        ParcelEntity savedParcel = parcelRepository.save(parcelEntity);
+        routingDecisionLogger.logCompletedDecision(savedParcel);
+        return savedParcel;
     }
 
     private void validateParcel(Parcel parcel) {

@@ -10,4 +10,11 @@ The development-only in-memory accounts read their passwords from these environm
 
 Local-only fallback values are configured for the three account passwords so the service can be run locally without setting them. Do not use those accounts or fallback passwords outside local development; set the variables through the deployment environment instead. Passwords must never be logged or committed.
 
-The local PostgreSQL password can likewise be supplied with `PARCEL_DB_PASSWORD`.
+## Database configuration
+
+Set both database credentials in the environment before starting the application:
+
+- `PARCEL_DB_USERNAME`
+- `PARCEL_DB_PASSWORD`
+
+The application intentionally provides no datasource credential defaults. Configure the local PostgreSQL instance with these values rather than committing database credentials.

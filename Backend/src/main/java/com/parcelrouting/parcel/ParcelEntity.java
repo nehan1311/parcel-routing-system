@@ -139,4 +139,20 @@ public class ParcelEntity {
     public Instant getApprovedAt() {
         return approvedAt;
     }
+
+    public void setStatus(ParcelStatus status) {
+        this.status = status;
+    }
+
+    public void setDepartment(String department) {
+        this.department = department;
+    }
+
+    public void setApprovedBy(String approvedBy) {
+        this.approvedBy = approvedBy;
+    }
+
+    public void setApprovedAt(Instant approvedAt) {
+        this.approvedAt = approvedAt;
+    }
 }

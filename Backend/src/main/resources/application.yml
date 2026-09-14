@@ -2,10 +2,15 @@ spring:
   application:
     name: parcel-routing
 
+  servlet:
+    multipart:
+      max-file-size: ${PARCEL_BATCH_MAX_UPLOAD_SIZE:10MB}
+      max-request-size: ${PARCEL_BATCH_MAX_UPLOAD_SIZE:10MB}
+
   datasource:
     url: jdbc:postgresql://localhost:5432/parcel_routing
-    username: postgres
-    password: Neha@131105
+    username: ${PARCEL_DB_USERNAME}
+    password: ${PARCEL_DB_PASSWORD}
 
   jpa:
     hibernate:
@@ -18,9 +23,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health
 
 parcel:
+  batch:
+    max-upload-size: ${PARCEL_BATCH_MAX_UPLOAD_SIZE:10MB}
+
   security:
     # Local development credentials only. Override with PARCEL_*_PASSWORD variables.
     operator-password: ${PARCEL_OPERATOR_PASSWORD:operator-local-only}

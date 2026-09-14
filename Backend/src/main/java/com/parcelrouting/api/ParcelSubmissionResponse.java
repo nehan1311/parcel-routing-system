@@ -13,7 +13,7 @@ public record ParcelSubmissionResponse(
         boolean insuranceRequired
 ) {
 
-    static ParcelSubmissionResponse from(ParcelEntity parcel) {
+    public static ParcelSubmissionResponse from(ParcelEntity parcel) {
         return new ParcelSubmissionResponse(
                 parcel.getId(),
                 parcel.getStatus(),

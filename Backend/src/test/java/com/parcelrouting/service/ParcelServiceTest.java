@@ -10,6 +10,7 @@ import com.parcelrouting.parcel.ParcelStatus;
 import com.parcelrouting.routing.RoutingConfig;
 import com.parcelrouting.routing.RoutingDecision;
 import com.parcelrouting.routing.RoutingEngine;
+import com.parcelrouting.monitoring.RoutingDecisionLogger;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -32,11 +33,13 @@ class ParcelServiceTest {
     private final ConfigService configService = mock(ConfigService.class);
     private final RoutingEngine routingEngine = mock(RoutingEngine.class);
     private final ParcelRepository parcelRepository = mock(ParcelRepository.class);
+    private final RoutingDecisionLogger routingDecisionLogger = mock(RoutingDecisionLogger.class);
     private final ParcelService parcelService = new ParcelService(
             configService,
             routingEngine,
             parcelRepository,
-            new ObjectMapper()
+            new ObjectMapper(),
+            routingDecisionLogger
     );
 
     @Test
@@ -59,6 +62,7 @@ class ParcelServiceTest {
         verify(configService).getActiveConfigWithVersion();
         verify(routingEngine).evaluate(parcel, config);
         verify(parcelRepository).save(any(ParcelEntity.class));
+        verify(routingDecisionLogger).logCompletedDecision(savedParcel);
     }
 
     @Test
@@ -80,6 +84,7 @@ class ParcelServiceTest {
         verify(configService).getActiveConfigWithVersion();
         verify(routingEngine).evaluate(parcel, config);
         verify(parcelRepository).save(any(ParcelEntity.class));
+        verify(routingDecisionLogger).logCompletedDecision(savedParcel);
     }
 
     @Test
