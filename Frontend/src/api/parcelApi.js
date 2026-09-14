@@ -21,15 +21,38 @@ async function request(path, options, credentials) {
     ? await response.json().catch(() => null)
     : await response.text().catch(() => "");
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       body?.message
       ?? (typeof body === "string" && body.trim())
       ?? (response.status === 401 && "Authentication failed. Check your username and password.")
       ?? (response.status === 403 && "You do not have permission to perform this action.")
       ?? `Request failed (${response.status})`,
     );
+    error.status = response.status;
+    throw error;
   }
   return body;
+}
+
+export function isAuthenticationError(error) {
+  return error?.status === 401 || error?.status === 403;
+}
+
+export async function authenticate(credentials) {
+  try {
+    await getConfigHistory(credentials);
+    return "ADMIN";
+  } catch (error) {
+    if (error?.status !== 403) throw error;
+  }
+
+  try {
+    await getPendingApprovals(credentials);
+    return "INSURANCE_APPROVER";
+  } catch (error) {
+    if (error?.status === 403) return "OPERATOR";
+    throw error;
+  }
 }
 
 export function submitParcel(parcel, credentials) {
