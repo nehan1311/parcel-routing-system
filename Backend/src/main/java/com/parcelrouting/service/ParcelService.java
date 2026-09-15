@@ -24,24 +24,27 @@ public class ParcelService {
     private final ParcelRepository parcelRepository;
     private final ObjectMapper objectMapper;
     private final RoutingDecisionLogger routingDecisionLogger;
+    private final ParcelValidator parcelValidator;
 
     public ParcelService(
             ConfigService configService,
             RoutingEngine routingEngine,
             ParcelRepository parcelRepository,
             ObjectMapper objectMapper,
-            RoutingDecisionLogger routingDecisionLogger
+            RoutingDecisionLogger routingDecisionLogger,
+            ParcelValidator parcelValidator
     ) {
         this.configService = configService;
         this.routingEngine = routingEngine;
         this.parcelRepository = parcelRepository;
         this.objectMapper = objectMapper;
         this.routingDecisionLogger = routingDecisionLogger;
+        this.parcelValidator = parcelValidator;
     }
 
     @Transactional
     public ParcelEntity submit(Parcel parcel) {
-        validateParcel(parcel);
+        parcelValidator.validate(parcel);
 
         ActiveRoutingConfig activeConfig = configService.getActiveConfigWithVersion();
         RoutingDecision decision = routingEngine.evaluate(parcel, activeConfig.routingConfig());
@@ -69,21 +72,6 @@ public class ParcelService {
         ParcelEntity savedParcel = parcelRepository.save(parcelEntity);
         routingDecisionLogger.logCompletedDecision(savedParcel);
         return savedParcel;
-    }
-
-    private void validateParcel(Parcel parcel) {
-        if (parcel == null) {
-            throw new IllegalArgumentException("Parcel must not be null");
-        }
-        if (!(parcel.weightKg() >= 0)) {
-            throw new IllegalArgumentException("Parcel weightKg must be greater than or equal to zero");
-        }
-        if (!(parcel.valueEur() >= 0)) {
-            throw new IllegalArgumentException("Parcel valueEur must be greater than or equal to zero");
-        }
-        if (parcel.attributes() == null) {
-            throw new IllegalArgumentException("Parcel attributes must not be null");
-        }
     }
 
     private String serializeAttributes(Parcel parcel) {

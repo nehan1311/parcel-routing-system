@@ -10,6 +10,7 @@ public record Parcel(
 ) {
 
     public Parcel {
+        destinationCountry = CountryCodes.normalize(destinationCountry);
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
     }
 }

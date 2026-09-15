@@ -6,6 +6,8 @@ import com.parcelrouting.parcel.ParcelStatus;
 import com.parcelrouting.security.SecurityConfiguration;
 import com.parcelrouting.service.ParcelService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -114,6 +116,73 @@ class ParcelControllerTest {
                         .content(validRequestJson().replace("2000.0", "-1.0")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").exists());
+
+        verify(parcelService, never()).submit(any(Parcel.class));
+    }
+
+    @Test
+    void normalizesLowercaseDestinationCountry() throws Exception {
+        ParcelEntity responseParcel = parcelEntity(
+                101L, ParcelStatus.ROUTED, "Regular", "Regular", "regular-department", 1L);
+        when(parcelService.submit(any(Parcel.class))).thenReturn(responseParcel);
+
+        mockMvc.perform(post("/api/parcels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson().replace("\"NL\"", "\"de\"")))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<Parcel> captor = ArgumentCaptor.forClass(Parcel.class);
+        verify(parcelService).submit(captor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("DE", captor.getValue().destinationCountry());
+    }
+
+    @Test
+    void normalizesSurroundingDestinationCountryWhitespace() throws Exception {
+        ParcelEntity responseParcel = parcelEntity(
+                101L, ParcelStatus.ROUTED, "Regular", "Regular", "regular-department", 1L);
+        when(parcelService.submit(any(Parcel.class))).thenReturn(responseParcel);
+
+        mockMvc.perform(post("/api/parcels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson().replace("\"NL\"", "\"  de  \"")))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<Parcel> captor = ArgumentCaptor.forClass(Parcel.class);
+        verify(parcelService).submit(captor.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("DE", captor.getValue().destinationCountry());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Germanyyyyy", "Europe", "Narnia"})
+    void rejectsInvalidDestinationCountry(String country) throws Exception {
+        mockMvc.perform(post("/api/parcels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson().replace("\"NL\"", "\"" + country + "\"")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Invalid request: destinationCountry must be a valid ISO 3166-1 alpha-2 country code")));
+
+        verify(parcelService, never()).submit(any(Parcel.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void rejectsBlankDestinationCountry(String country) throws Exception {
+        mockMvc.perform(post("/api/parcels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson().replace("\"NL\"", "\"" + country + "\"")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Invalid request: destinationCountry must not be blank")));
+
+        verify(parcelService, never()).submit(any(Parcel.class));
+    }
+
+    @Test
+    void rejectsNullDestinationCountry() throws Exception {
+        mockMvc.perform(post("/api/parcels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson().replace("\"NL\"", "null")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("Invalid request: destinationCountry must not be blank")));
 
         verify(parcelService, never()).submit(any(Parcel.class));
     }

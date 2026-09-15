@@ -4,6 +4,7 @@ import {
   approveParcel, authenticate, getPendingApprovals, isAuthenticationError,
   submitParcel, uploadBatch, validateConfigDraft,
 } from "./api/parcelApi";
+import { countries, countryName } from "./countries";
 
 const parcelInitial = { weightKg: "", valueEur: "", destinationCountry: "" };
 const blankRule = { id: "", priority: "", field: "weight_kg", operator: "GT", value: "", department: "" };
@@ -194,8 +195,11 @@ function RouteParcelPage({ credentials, onAuthInvalid }) {
             </label>
           </div>
           <label>Destination country
-            <input value={parcel.destinationCountry}
-              onChange={(e) => setParcel({ ...parcel, destinationCountry: e.target.value })} placeholder="e.g. DE" />
+            <select required value={parcel.destinationCountry}
+              onChange={(e) => setParcel({ ...parcel, destinationCountry: e.target.value })}>
+              <option value="">Select a country</option>
+              {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
+            </select>
           </label>
           <div><button disabled={busy}>{busy ? "Routing…" : "Route parcel"}</button></div>
         </form>
@@ -531,8 +535,24 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                         </select>
                       </label>
                       <label>Comparison value
-                        <input required value={rule.value} onChange={(e) => changeRule(idx, "value", e.target.value)}
-                          placeholder={rule.operator === "IN" ? "Comma-separated values" : "Enter a value"} />
+                        {rule.field === "destination_country" ? (
+                          rule.operator === "IN" ? (
+                            <select required multiple size="5"
+                              value={rule.value.split(",").map((value) => value.trim()).filter(Boolean)}
+                              onChange={(e) => changeRule(idx, "value", [...e.target.selectedOptions].map((option) => option.value).join(","))}>
+                              {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
+                            </select>
+                          ) : (
+                            <select required value={rule.value.split(",")[0].trim()}
+                              onChange={(e) => changeRule(idx, "value", e.target.value)}>
+                              <option value="">Select a country</option>
+                              {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
+                            </select>
+                          )
+                        ) : (
+                          <input required value={rule.value} onChange={(e) => changeRule(idx, "value", e.target.value)}
+                            placeholder={rule.operator === "IN" ? "Comma-separated values" : "Enter a value"} />
+                        )}
                         <span className="field-help">Must be compatible with the selected field.</span>
                       </label>
                     </div>
@@ -718,7 +738,7 @@ function ApproverPage({ credentials, onAuthInvalid }) {
                 <dl className="approval-details">
                   <div><dt>Weight</dt><dd>{parcel.weightKg} kg</dd></div>
                   <div><dt>Declared value</dt><dd>EUR {parcel.valueEur}</dd></div>
-                  <div><dt>Destination</dt><dd>{parcel.destinationCountry || "—"}</dd></div>
+                  <div><dt>Destination</dt><dd>{countryName(parcel.destinationCountry)}</dd></div>
                   <div><dt>Predicted department</dt><dd>{parcel.predictedDepartment}</dd></div>
                   <div><dt>Matched rule</dt><dd>{parcel.matchedRuleId}</dd></div>
                   <div><dt>Config version</dt><dd>{parcel.routingConfigVersionId}</dd></div>

@@ -39,7 +39,8 @@ class ParcelServiceTest {
             routingEngine,
             parcelRepository,
             new ObjectMapper(),
-            routingDecisionLogger
+            routingDecisionLogger,
+            new ParcelValidator()
     );
 
     @Test
@@ -148,6 +149,6 @@ class ParcelServiceTest {
     }
 
     private Parcel parcel(double weightKg, double valueEur) {
-        return new Parcel(weightKg, valueEur, null, Map.of("fragile", true));
+        return new Parcel(weightKg, valueEur, "NL", Map.of("fragile", true));
     }
 }

@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.parcelrouting.parcel.Parcel;
 import com.parcelrouting.parcel.ParcelEntity;
 import com.parcelrouting.parcel.ParcelStatus;
+import com.parcelrouting.parcel.CountryCodes;
 import com.parcelrouting.service.ParcelService;
+import com.parcelrouting.service.ParcelValidator;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,7 +30,7 @@ import static org.mockito.Mockito.when;
 class BatchProcessorTest {
 
     private final ParcelService parcelService = mock(ParcelService.class);
-    private final BatchProcessor batchProcessor = new BatchProcessor(parcelService, new ObjectMapper());
+    private final BatchProcessor batchProcessor = new BatchProcessor(parcelService, new ObjectMapper(), new ParcelValidator());
 
     @Test
     void processesMultipleValidJsonRecords() {
@@ -36,7 +38,7 @@ class BatchProcessorTest {
                 .when(parcelService).submit(any(Parcel.class));
 
         BatchProcessor.BatchResult result = batchProcessor.processJson(input("""
-                [{"weightKg":5,"valueEur":100,"destinationCountry":"NL","attributes":{}},
+                [{"weightKg":5,"valueEur":100,"destinationCountry":" nl ","attributes":{}},
                  {"weightKg":6,"valueEur":200,"destinationCountry":"BE","attributes":{"fragile":true}}]
                 """));
 
@@ -44,6 +46,10 @@ class BatchProcessorTest {
         assertEquals(2, result.successfulRecords());
         assertEquals(0, result.failedRecords());
         assertEquals(List.of(1L, 2L), result.createdParcelIds());
+        ArgumentCaptor<Parcel> parcels = ArgumentCaptor.forClass(Parcel.class);
+        verify(parcelService, times(2)).submit(parcels.capture());
+        assertEquals("NL", parcels.getAllValues().get(0).destinationCountry());
+        assertEquals("BE", parcels.getAllValues().get(1).destinationCountry());
     }
 
     @Test
@@ -53,8 +59,8 @@ class BatchProcessorTest {
 
         BatchProcessor.BatchResult result = batchProcessor.processXml(input("""
                 <Container><parcels>
-                  <Parcel><Weight>5</Weight><Value>100</Value><Recipient>One</Recipient></Parcel>
-                  <Parcel><Weight>6</Weight><Value>200</Value><Recipient>Two</Recipient></Parcel>
+                  <Parcel><Weight>5</Weight><Value>100</Value><DestinationCountry>DE</DestinationCountry><Recipient>One</Recipient></Parcel>
+                  <Parcel><Weight>6</Weight><Value>200</Value><DestinationCountry>NL</DestinationCountry><Recipient>Two</Recipient></Parcel>
                 </parcels></Container>
                 """));
 
@@ -63,16 +69,106 @@ class BatchProcessorTest {
         ArgumentCaptor<Parcel> parcels = ArgumentCaptor.forClass(Parcel.class);
         verify(parcelService, times(2)).submit(parcels.capture());
         assertEquals("One", parcels.getAllValues().get(0).attributes().get("Recipient"));
+        assertEquals("DE", parcels.getAllValues().get(0).destinationCountry());
+        assertEquals("NL", parcels.getAllValues().get(1).destinationCountry());
+    }
+
+    @Test
+    void normalizesXmlDestinationCountry() {
+        doReturn(savedParcel(11L, ParcelStatus.ROUTED)).when(parcelService).submit(any(Parcel.class));
+
+        BatchProcessor.BatchResult result = batchProcessor.processXml(input("""
+                <Container><Parcel><Weight>5</Weight><Value>100</Value>
+                  <DestinationCountry>  de  </DestinationCountry>
+                </Parcel></Container>
+                """));
+
+        assertEquals(1, result.successfulRecords());
+        ArgumentCaptor<Parcel> parcel = ArgumentCaptor.forClass(Parcel.class);
+        verify(parcelService).submit(parcel.capture());
+        assertEquals("DE", parcel.getValue().destinationCountry());
+    }
+
+    @Test
+    void reportsInvalidXmlCountryAsRecordError() {
+        when(parcelService.submit(any(Parcel.class))).thenAnswer(invocation -> {
+            Parcel parcel = invocation.getArgument(0);
+            if (!CountryCodes.isValid(parcel.destinationCountry())) {
+                throw new IllegalArgumentException("destinationCountry must be a valid ISO 3166-1 alpha-2 country code");
+            }
+            return savedParcel(12L, ParcelStatus.ROUTED);
+        });
+
+        BatchProcessor.BatchResult result = batchProcessor.processXml(input("""
+                <Container><Parcel><Weight>5</Weight><Value>100</Value>
+                  <DestinationCountry>Narnia</DestinationCountry>
+                </Parcel></Container>
+                """));
+
+        assertEquals(0, result.successfulRecords());
+        assertEquals(1, result.failedRecords());
+        assertTrue(result.errors().getFirst().message().contains("valid ISO 3166-1 alpha-2"));
+    }
+
+    @Test
+    void reportsMissingAndBlankXmlCountryAsRecordErrors() {
+        when(parcelService.submit(any(Parcel.class))).thenAnswer(invocation -> {
+            Parcel parcel = invocation.getArgument(0);
+            if (parcel.destinationCountry() == null || parcel.destinationCountry().isBlank()) {
+                throw new IllegalArgumentException("destinationCountry must not be blank");
+            }
+            return savedParcel(13L, ParcelStatus.ROUTED);
+        });
+
+        BatchProcessor.BatchResult result = batchProcessor.processXml(input("""
+                <Container>
+                  <Parcel><Weight>5</Weight><Value>100</Value></Parcel>
+                  <Parcel><Weight>6</Weight><Value>200</Value><DestinationCountry>  </DestinationCountry></Parcel>
+                </Container>
+                """));
+
+        assertEquals(0, result.successfulRecords());
+        assertEquals(2, result.failedRecords());
+    }
+
+    @Test
+    void continuesAfterMixedValidAndInvalidXmlCountries() {
+        when(parcelService.submit(any(Parcel.class))).thenAnswer(invocation -> {
+            Parcel parcel = invocation.getArgument(0);
+            if (!CountryCodes.isValid(parcel.destinationCountry())) {
+                throw new IllegalArgumentException("destinationCountry must be a valid ISO 3166-1 alpha-2 country code");
+            }
+            return savedParcel(parcel.destinationCountry().equals("DE") ? 14L : 15L, ParcelStatus.ROUTED);
+        });
+
+        BatchProcessor.BatchResult result = batchProcessor.processXml(input("""
+                <Container>
+                  <Parcel><Weight>5</Weight><Value>100</Value><DestinationCountry>DE</DestinationCountry></Parcel>
+                  <Parcel><Weight>6</Weight><Value>200</Value><DestinationCountry>Narnia</DestinationCountry></Parcel>
+                  <Parcel><Weight>7</Weight><Value>300</Value><DestinationCountry>NL</DestinationCountry></Parcel>
+                </Container>
+                """));
+
+        assertEquals(3, result.totalRecords());
+        assertEquals(2, result.successfulRecords());
+        assertEquals(1, result.failedRecords());
+        assertEquals(List.of(14L, 15L), result.createdParcelIds());
     }
 
     @Test
     void continuesAfterMixedValidAndInvalidRecords() {
-        doReturn(savedParcel(5L, ParcelStatus.ROUTED)).when(parcelService).submit(any(Parcel.class));
+        when(parcelService.submit(any(Parcel.class))).thenAnswer(invocation -> {
+            Parcel parcel = invocation.getArgument(0);
+            if (!CountryCodes.isValid(parcel.destinationCountry())) {
+                throw new IllegalArgumentException("destinationCountry must be a valid ISO 3166-1 alpha-2 country code");
+            }
+            return savedParcel(parcel.destinationCountry().equals("DE") ? 5L : 6L, ParcelStatus.ROUTED);
+        });
 
         BatchProcessor.BatchResult result = batchProcessor.processJson(input("""
-                [{"weightKg":5,"valueEur":100,"attributes":{}},
-                 {"weightKg":"bad","valueEur":100,"attributes":{}},
-                 {"weightKg":6,"valueEur":200,"attributes":{}}]
+                [{"weightKg":5,"valueEur":100,"destinationCountry":"de","attributes":{}},
+                 {"weightKg":6,"valueEur":100,"destinationCountry":"Narnia","attributes":{}},
+                 {"weightKg":7,"valueEur":200,"destinationCountry":"NL","attributes":{}}]
                 """));
 
         assertEquals(3, result.totalRecords());
@@ -85,8 +181,8 @@ class BatchProcessorTest {
     @Test
     void reportsInvalidWeightAndValuePerRecord() {
         BatchProcessor.BatchResult result = batchProcessor.processJson(input("""
-                [{"weightKg":-1,"valueEur":100,"attributes":{}},
-                 {"weightKg":1,"valueEur":-100,"attributes":{}}]
+                [{"weightKg":-1,"valueEur":100,"destinationCountry":"DE","attributes":{}},
+                 {"weightKg":1,"valueEur":-100,"destinationCountry":"NL","attributes":{}}]
                 """));
 
         assertEquals(2, result.failedRecords());
@@ -99,7 +195,7 @@ class BatchProcessorTest {
         doReturn(savedParcel(6L, ParcelStatus.PENDING_APPROVAL)).when(parcelService).submit(any(Parcel.class));
 
         BatchProcessor.BatchResult result = batchProcessor.processJson(input("""
-                [{"weightKg":15,"valueEur":2000,"attributes":{}}]
+                [{"weightKg":15,"valueEur":2000,"destinationCountry":"DE","attributes":{}}]
                 """));
 
         assertEquals(1, result.successfulRecords());
@@ -111,7 +207,7 @@ class BatchProcessorTest {
         doReturn(savedParcel(7L, ParcelStatus.ROUTED)).when(parcelService).submit(any(Parcel.class));
 
         BatchProcessor.BatchResult result = batchProcessor.processJson(input("""
-                [{"weightKg":5,"valueEur":100,"attributes":{}}]
+                [{"weightKg":5,"valueEur":100,"destinationCountry":"DE","attributes":{}}]
                 """));
 
         assertEquals(1, result.successfulRecords());
@@ -134,7 +230,7 @@ class BatchProcessorTest {
 
     @Test
     void parsesLargeJsonBatchFromAStreamingInput() {
-        String record = "{\"weightKg\":1,\"valueEur\":1,\"attributes\":{}}";
+        String record = "{\"weightKg\":1,\"valueEur\":1,\"destinationCountry\":\"DE\",\"attributes\":{}}";
         String json = "[" + String.join(",", java.util.Collections.nCopies(250, record)) + "]";
         doReturn(savedParcel(9L, ParcelStatus.ROUTED)).when(parcelService).submit(any(Parcel.class));
 
@@ -147,7 +243,7 @@ class BatchProcessorTest {
 
     @Test
     void parsesLargeXmlBatchFromAStreamingInput() {
-        String record = "<Parcel><Weight>1</Weight><Value>1</Value></Parcel>";
+        String record = "<Parcel><Weight>1</Weight><Value>1</Value><DestinationCountry>DE</DestinationCountry></Parcel>";
         String xml = "<Container><parcels>" + String.join("", java.util.Collections.nCopies(250, record))
                 + "</parcels></Container>";
         doReturn(savedParcel(10L, ParcelStatus.ROUTED)).when(parcelService).submit(any(Parcel.class));

@@ -9,6 +9,7 @@ import com.parcelrouting.api.ParcelSubmissionResponse;
 import com.parcelrouting.parcel.Parcel;
 import com.parcelrouting.parcel.ParcelEntity;
 import com.parcelrouting.service.ParcelService;
+import com.parcelrouting.service.ParcelValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,10 +33,12 @@ public class BatchProcessor {
 
     private final ParcelService parcelService;
     private final ObjectMapper objectMapper;
+    private final ParcelValidator parcelValidator;
 
-    public BatchProcessor(ParcelService parcelService, ObjectMapper objectMapper) {
+    public BatchProcessor(ParcelService parcelService, ObjectMapper objectMapper, ParcelValidator parcelValidator) {
         this.parcelService = parcelService;
         this.objectMapper = objectMapper;
+        this.parcelValidator = parcelValidator;
     }
 
     @Transactional
@@ -172,6 +175,7 @@ public class BatchProcessor {
     private Parcel readXmlParcel(XMLStreamReader reader) throws XMLStreamException {
         String weight = null;
         String value = null;
+        String destinationCountry = null;
         String currentElement = null;
         Map<String, Object> attributes = new LinkedHashMap<>();
 
@@ -186,13 +190,15 @@ public class BatchProcessor {
                         weight = text;
                     } else if ("Value".equals(currentElement)) {
                         value = text;
+                    } else if ("DestinationCountry".equals(currentElement)) {
+                        destinationCountry = text;
                     } else {
                         attributes.put(currentElement, text);
                     }
                 }
             } else if (event == XMLStreamConstants.END_ELEMENT) {
                 if ("Parcel".equals(reader.getLocalName())) {
-                    return parcel(parseXmlNumber(weight, "weightKg"), parseXmlNumber(value, "valueEur"), null, attributes);
+                    return parcel(parseXmlNumber(weight, "weightKg"), parseXmlNumber(value, "valueEur"), destinationCountry, attributes);
                 }
                 currentElement = null;
             }
@@ -255,6 +261,7 @@ public class BatchProcessor {
     }
 
     private void processRecord(Parcel parcel, BatchResultBuilder result) {
+        parcelValidator.validate(parcel);
         ParcelEntity saved = parcelService.submit(parcel);
         result.addSuccess(saved);
     }
