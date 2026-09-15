@@ -1,0 +1,17 @@
+[Unit]
+Description=Parcel Routing System API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=parcelrouting
+Group=parcelrouting
+WorkingDirectory=/opt/parcel-routing
+EnvironmentFile=/etc/parcel-routing/parcel-routing.env
+ExecStart=/usr/bin/java -jar /opt/parcel-routing/parcel-routing.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

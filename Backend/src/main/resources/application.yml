@@ -1,3 +1,7 @@
+server:
+  address: ${SERVER_ADDRESS:0.0.0.0}
+  port: ${SERVER_PORT:8080}
+
 spring:
   application:
     name: parcel-routing
@@ -8,7 +12,7 @@ spring:
       max-request-size: ${PARCEL_BATCH_MAX_UPLOAD_SIZE:10MB}
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/parcel_routing
+    url: ${PARCEL_DB_URL:jdbc:postgresql://localhost:5432/parcel_routing}
     username: ${PARCEL_DB_USERNAME}
     password: ${PARCEL_DB_PASSWORD}
 
