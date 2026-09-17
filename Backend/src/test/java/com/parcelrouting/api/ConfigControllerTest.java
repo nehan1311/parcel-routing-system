@@ -183,6 +183,42 @@ class ConfigControllerTest {
     }
 
     @Test
+    void adminPassesAcknowledgedRuleChangesToActivationService() throws Exception {
+        RoutingConfigVersion activated = new RoutingConfigVersion(
+                2, ConfigVersionStatus.ACTIVE, "{}", "admin", Instant.now(), Instant.now(), 1L
+        );
+        when(configService.activate(2L, "admin", List.of("heavy-department"))).thenReturn(activated);
+
+        mockMvc.perform(post("/api/config/drafts/2/activate")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgedRuleChanges\":[\"heavy-department\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        verify(configService).activate(2L, "admin", List.of("heavy-department"));
+    }
+
+    @Test
+    void unacknowledgedRuleChangeUsesExistingActivationConflictResponse() throws Exception {
+        when(configService.activate(2L, "admin", List.of()))
+                .thenThrow(new com.parcelrouting.config.UnacknowledgedRuleChangeException(
+                        2, List.of("heavy-department")
+                ));
+
+        mockMvc.perform(post("/api/config/drafts/2/activate")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"acknowledgedRuleChanges\":[]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "Routing configuration draft cannot be activated: 2. "
+                                + "unacknowledged field/operator changes for rule IDs: heavy-department"
+                ));
+    }
+
+    @Test
     void dryRunAndActivationReturnNotFoundForMissingDraft() throws Exception {
         when(configService.dryRun(99)).thenThrow(new ConfigVersionNotFoundException(99));
         when(configService.activate(99L, "admin")).thenThrow(new ConfigVersionNotFoundException(99));

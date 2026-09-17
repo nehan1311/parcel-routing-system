@@ -22,6 +22,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.stream.Collectors;
 
 @Service
 public class ConfigService {
@@ -140,6 +143,11 @@ public class ConfigService {
 
     @Transactional
     public RoutingConfigVersion activate(Long version, String activatedBy) {
+        return activate(version, activatedBy, List.of());
+    }
+
+    @Transactional
+    public RoutingConfigVersion activate(Long version, String activatedBy, List<String> acknowledgedRuleChanges) {
         if (version == null || version > Integer.MAX_VALUE || version < Integer.MIN_VALUE) {
             throw new IllegalArgumentException("Routing configuration version must be a valid integer");
         }
@@ -149,7 +157,7 @@ public class ConfigService {
 
         RoutingConfigVersion draft = routingConfigVersionRepository.findByVersion(version.intValue())
                 .orElseThrow(() -> new ConfigVersionNotFoundException(version.intValue()));
-        return activateDraft(draft, activatedBy);
+        return activateDraftWithAcknowledgment(draft, activatedBy, acknowledgedRuleChanges);
     }
 
     @Transactional(readOnly = true)
@@ -209,6 +217,29 @@ public class ConfigService {
         return activateDraft(rollbackDraft, activatedBy);
     }
 
+    private RoutingConfigVersion activateDraftWithAcknowledgment(
+            RoutingConfigVersion draft, String activatedBy, List<String> acknowledgedRuleChanges
+    ) {
+        if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
+            throw new ConfigVersionStateException(draft.getVersion());
+        }
+        if (!draft.hasSuccessfulDryRunForCurrentConfiguration()) {
+            throw new ConfigVersionActivationException(
+                    draft.getVersion(), "a successful dry-run for the current configuration is required"
+            );
+        }
+
+        Set<String> acknowledged = acknowledgedRuleChanges == null
+                ? Set.of()
+                : new HashSet<>(acknowledgedRuleChanges);
+        List<String> requiredAcknowledgements = findUnacknowledgedRuleChanges(draft, acknowledged);
+        if (!requiredAcknowledgements.isEmpty()) {
+            throw new UnacknowledgedRuleChangeException(draft.getVersion(), requiredAcknowledgements);
+        }
+
+        return activateDraftAfterChecks(draft, activatedBy);
+    }
+
     private RoutingConfigVersion activateDraft(RoutingConfigVersion draft, String activatedBy) {
         if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
             throw new ConfigVersionStateException(draft.getVersion());
@@ -219,6 +250,10 @@ public class ConfigService {
             );
         }
 
+        return activateDraftAfterChecks(draft, activatedBy);
+    }
+
+    private RoutingConfigVersion activateDraftAfterChecks(RoutingConfigVersion draft, String activatedBy) {
         List<RoutingConfigVersion> activeVersions = routingConfigVersionRepository.findByStatus(ConfigVersionStatus.ACTIVE);
         for (RoutingConfigVersion activeVersion : activeVersions) {
             activeVersion.archive();
@@ -228,6 +263,30 @@ public class ConfigService {
 
         draft.activate(activatedBy, Instant.now());
         return routingConfigVersionRepository.save(draft);
+    }
+
+    private List<String> findUnacknowledgedRuleChanges(
+            RoutingConfigVersion draft, Set<String> acknowledgedRuleChanges
+    ) {
+        RoutingConfig activeConfiguration;
+        try {
+            activeConfiguration = getActiveConfigWithVersion().routingConfig();
+        } catch (IllegalStateException exception) {
+            if ("No active routing configuration exists".equals(exception.getMessage())) {
+                return List.of();
+            }
+            throw exception;
+        }
+
+        RoutingConfig draftConfiguration = parseRoutingConfig(draft.getRulesJson());
+        return semanticDiffer.diff(activeConfiguration, draftConfiguration).stream()
+                .filter(diff -> diff.changeType() == ConfigSemanticDiffer.ChangeType.FIELD_CHANGE
+                        || diff.changeType() == ConfigSemanticDiffer.ChangeType.OPERATOR_CHANGE)
+                .map(ConfigSemanticDiffer.RuleDiff::ruleId)
+                .filter(ruleId -> !acknowledgedRuleChanges.contains(ruleId))
+                .sorted()
+                .distinct()
+                .collect(Collectors.toList());
     }
 
     public RoutingConfig getActiveConfig() {

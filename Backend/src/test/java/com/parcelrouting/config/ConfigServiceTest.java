@@ -260,6 +260,95 @@ class ConfigServiceTest {
     }
 
     @Test
+    void fieldChangeWithoutAcknowledgmentIsBlockedAndNamesTheRule() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, fieldChangedConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+
+        UnacknowledgedRuleChangeException exception = assertThrows(
+                UnacknowledgedRuleChangeException.class,
+                () -> configService.activate(2L, "admin")
+        );
+
+        assertTrue(exception.getMessage().contains("heavy-department"));
+        assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
+        assertEquals(ConfigVersionStatus.DRAFT, draft.getStatus());
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    void acknowledgedFieldChangeActivatesSuccessfully() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, fieldChangedConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+        when(repository.save(draft)).thenReturn(draft);
+
+        RoutingConfigVersion activated = configService.activate(
+                2L, "admin", List.of("heavy-department")
+        );
+
+        assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
+        assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
+        verify(repository).saveAll(List.of(active));
+        verify(repository).flush();
+    }
+
+    @Test
+    void acknowledgmentForDifferentRuleDoesNotAllowFieldChange() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, fieldChangedConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+
+        UnacknowledgedRuleChangeException exception = assertThrows(
+                UnacknowledgedRuleChangeException.class,
+                () -> configService.activate(2L, "admin", List.of("regular-department"))
+        );
+
+        assertTrue(exception.getMessage().contains("heavy-department"));
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    void firstActivationSkipsSemanticAcknowledgmentCheck() {
+        RoutingConfigVersion draft = draftVersion(1, fieldChangedConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(1)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of());
+        when(repository.save(draft)).thenReturn(draft);
+
+        RoutingConfigVersion activated = configService.activate(1L, "admin", List.of());
+
+        assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
+        verify(repository).saveAll(List.of());
+        verify(repository).flush();
+    }
+
+    @Test
+    void thresholdChangeDoesNotRequireAcknowledgment() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, thresholdChangedConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+        when(repository.save(draft)).thenReturn(draft);
+
+        RoutingConfigVersion activated = configService.activate(2L, "admin");
+
+        assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
+        assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
+    }
+
+    @Test
     void activationWithoutSuccessfulDryRunOrWithFailedDryRunLeavesActiveUnchanged() {
         RoutingConfigVersion active = activeVersion(validConfigJson());
         RoutingConfigVersion draft = draftVersion(2, validConfigJson());
@@ -447,5 +536,14 @@ class ConfigServiceTest {
 
     private String alternateConfigJson() {
         return validConfigJson().replace("\"requiredAboveValueEur\": 1000", "\"requiredAboveValueEur\": 1500");
+    }
+
+    private String fieldChangedConfigJson() {
+        return validConfigJson().replaceFirst("\"field\": \"weight_kg\"", "\"field\": \"destination_country\"")
+                .replaceFirst("\"value\": 10", "\"value\": \"DE\"");
+    }
+
+    private String thresholdChangedConfigJson() {
+        return validConfigJson().replaceFirst("\"value\": 10", "\"value\": 20");
     }
 }

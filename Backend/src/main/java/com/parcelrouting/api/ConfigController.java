@@ -48,8 +48,14 @@ public class ConfigController {
 
     @PostMapping("/drafts/{version}/activate")
     @PreAuthorize("hasRole('ADMIN')")
-    public DraftResponse activateDraft(@PathVariable Long version, Authentication authentication) {
-        RoutingConfigVersion activatedVersion = configService.activate(version, authentication.getName());
+    public DraftResponse activateDraft(
+            @PathVariable Long version,
+            @RequestBody(required = false) ActivateRequest request,
+            Authentication authentication
+    ) {
+        RoutingConfigVersion activatedVersion = request == null
+                ? configService.activate(version, authentication.getName())
+                : configService.activate(version, authentication.getName(), request.acknowledgedRuleChanges());
         return new DraftResponse(
                 activatedVersion.getVersion(),
                 activatedVersion.getStatus(),
@@ -85,5 +91,8 @@ public class ConfigController {
     }
 
     public record ActiveConfigResponse(int version, RoutingConfig configuration) {
+    }
+
+    public record ActivateRequest(List<String> acknowledgedRuleChanges) {
     }
 }
