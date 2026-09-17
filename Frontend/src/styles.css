@@ -105,6 +105,10 @@ input::placeholder { color: var(--slate-400); }
 select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; padding-right: 32px; }
 form { display: grid; gap: 14px; margin-top: 20px; }
 .form-row { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+.draft-reason { margin-top: 2px; }
+.draft-reason textarea { background: var(--white); border: 1.5px solid var(--slate-300); border-radius: var(--radius-sm); color: var(--slate-900); font: inherit; min-height: 76px; padding: 8px 11px; resize: vertical; transition: border-color var(--transition), box-shadow var(--transition); width: 100%; }
+.draft-reason textarea:focus { border-color: var(--brand-500); box-shadow: 0 0 0 3px rgba(45,114,200,.15); outline: none; }
+.optional-label { color: var(--slate-500); font-size: .75rem; font-weight: 500; }
 
 /* ── Login ─────────────────────────────────────────────────────────────── */
 .login-shell {

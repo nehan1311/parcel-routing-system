@@ -576,6 +576,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const [confirmActivation, setConfirmActivation] = useState(false);
   const [activeConfiguration, setActiveConfiguration] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const [reason, setReason] = useState("");
   const historicalImpact = dryRun?.historicalImpact;
   const changedRuleDiffs = (dryRun?.semanticDiff ?? []).filter((diff) => diff?.changeType !== "NO_CHANGE");
   const boundarySimulation = dryRun?.boundarySimulation;
@@ -626,7 +627,10 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
       setToast({ type: "error", title: "Check the configuration", message: "Correct the highlighted fields before creating the draft." });
       return;
     }
-    const payload = toConfig(form);
+    const payload = {
+      ...toConfig(form),
+      ...(reason.trim() ? { reason: reason.trim() } : {}),
+    };
     setBusy("create");
     try {
       const next = await createConfigDraft(payload, credentials);
@@ -716,6 +720,11 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                 onChange={(e) => { setForm({ ...form, insuranceThresholdEur: e.target.value }); setFormErrors({}); }} />
               <span className="field-help">Parcels declared above this value require insurance approval before routing.</span>
               <FieldError message={formErrors.insuranceThresholdEur} />
+            </label>
+            <label className="draft-reason">Reason <span className="optional-label">(optional)</span>
+              <textarea maxLength="500" rows="3" value={reason}
+                onChange={(e) => setReason(e.target.value)} placeholder="Why is this configuration change being made?" />
+              <span className="field-help">Up to 500 characters. This is stored for review only.</span>
             </label>
             <div className="rule-list">
               <div className="rule-list-heading">
@@ -811,7 +820,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
           </fieldset>
           {!draft
             ? <div><button disabled={Boolean(busy)}>{busy === "create" ? "Creating draft…" : "Create draft"}</button></div>
-            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); }}>Start new draft</button>
+            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); setReason(""); }}>Start new draft</button>
           }
         </form>
 
@@ -1021,6 +1030,7 @@ function HistoryPage({ credentials, onAuthInvalid }) {
                   <div><dt>Created by</dt><dd>{item.createdBy} · {dateText(item.createdAt)}</dd></div>
                   <div><dt>Activated by</dt><dd>{item.activatedBy ? `${item.activatedBy} · ${dateText(item.activatedAt)}` : "Not activated"}</dd></div>
                   {item.predecessorVersionId && <div><dt>Predecessor</dt><dd>Record #{item.predecessorVersionId}</dd></div>}
+                  {item.reason?.trim() && <div><dt>Reason</dt><dd>{item.reason}</dd></div>}
                 </dl>
                 {item.status === "ARCHIVED" && (
                   <button className="secondary rollback-btn" onClick={() => rollback(item.version)} disabled={Boolean(busy)}>
