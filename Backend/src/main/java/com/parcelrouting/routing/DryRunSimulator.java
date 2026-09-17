@@ -111,10 +111,33 @@ public class DryRunSimulator {
 
     public record DryRunResult(
             int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures,
-            HistoricalImpact historicalImpact
+            HistoricalImpact historicalImpact,
+            List<ConfigSemanticDiffer.RuleDiff> semanticDiff,
+            BoundarySimulator.BoundarySimulationResult boundarySimulation
     ) {
         public DryRunResult(int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures) {
-            this(totalCases, passedCases, failedCases, failures, HistoricalImpact.empty());
+            this(totalCases, passedCases, failedCases, failures, HistoricalImpact.empty(), List.of(), BoundarySimulator.empty());
+        }
+
+        public DryRunResult(
+                int totalCases,
+                int passedCases,
+                int failedCases,
+                List<DryRunFailure> failures,
+                HistoricalImpact historicalImpact
+        ) {
+            this(totalCases, passedCases, failedCases, failures, historicalImpact, List.of(), BoundarySimulator.empty());
+        }
+
+        public DryRunResult(
+                int totalCases,
+                int passedCases,
+                int failedCases,
+                List<DryRunFailure> failures,
+                HistoricalImpact historicalImpact,
+                List<ConfigSemanticDiffer.RuleDiff> semanticDiff
+        ) {
+            this(totalCases, passedCases, failedCases, failures, historicalImpact, semanticDiff, BoundarySimulator.empty());
         }
 
         @JsonProperty("overallStatus")

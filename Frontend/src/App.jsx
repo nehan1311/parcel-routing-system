@@ -179,6 +179,44 @@ function decisionSummary(decision) {
   return `${decision.department ?? decision.predictedDepartment ?? "—"} · insurance ${decision.insuranceRequired ? "required" : "not required"}`;
 }
 
+function semanticChangeLabel(changeType) {
+  const labels = {
+    THRESHOLD_CHANGE: "Threshold changed",
+    OPERATOR_CHANGE: "Operator changed",
+    FIELD_CHANGE: "Field changed",
+    PRIORITY_CHANGE: "Priority changed",
+    DEPARTMENT_CHANGE: "Department changed",
+    NEW_RULE: "New rule",
+    REMOVED_RULE: "Removed rule",
+  };
+  return labels[changeType] ?? changeType;
+}
+
+function validationWarningLabel(type) {
+  return {
+    GAP: "Coverage gap",
+    UNREACHABLE_RULE: "Unreachable rule",
+    OVERLAP: "Rule overlap",
+  }[type] ?? type;
+}
+
+function validationWarningDetail(warning) {
+  if (warning.type === "GAP") return `${warning.field ?? "Numeric field"}: ${warning.message ?? "coverage gap detected"}`;
+  if (warning.type === "UNREACHABLE_RULE") return `${warning.ruleId ?? "Rule"} is shadowed by ${warning.relatedRuleId ?? "a higher-priority rule"}`;
+  if (warning.type === "OVERLAP") return `${warning.ruleId ?? "Rule"} overlaps ${warning.relatedRuleId ?? "another rule"}`;
+  return warning.message ?? "Advisory warning";
+}
+
+function boundaryRangeLabel(range) {
+  const weight = range.minWeightKg === range.maxWeightKg
+    ? `${range.minWeightKg} kg`
+    : `${range.minWeightKg}–${range.maxWeightKg} kg`;
+  const value = range.minValueEur === range.maxValueEur
+    ? `€${range.minValueEur}`
+    : `€${range.minValueEur}–€${range.maxValueEur}`;
+  return `${weight} · ${value}`;
+}
+
 function ActivationConfirmModal({ draft, activeConfiguration, changes, dryRun, onCancel, onConfirm, busy }) {
   const impact = dryRun?.historicalImpact;
   return (
@@ -532,10 +570,14 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const { form, setForm, draft, setDraft, validation, setValidation, dryRun, setDryRun, toast, setToast, busy, setBusy } = sharedState;
   const ready = validation?.valid && dryRun?.failedCases === 0;
   const [impactExpanded, setImpactExpanded] = useState(false);
+  const [ruleChangesExpanded, setRuleChangesExpanded] = useState(false);
   const [confirmActivation, setConfirmActivation] = useState(false);
   const [activeConfiguration, setActiveConfiguration] = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const historicalImpact = dryRun?.historicalImpact;
+  const changedRuleDiffs = (dryRun?.semanticDiff ?? []).filter((diff) => diff?.changeType !== "NO_CHANGE");
+  const boundarySimulation = dryRun?.boundarySimulation;
+  const boundaryChanges = boundarySimulation?.changedRanges ?? [];
   const draftConfiguration = useMemo(() => toConfig(form), [form]);
   const activationChanges = useMemo(() => {
     if (!activeConfiguration?.configuration) return [];
@@ -778,6 +820,18 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
             <strong>{validation.valid ? "✓ Validation passed" : "✕ Validation errors"}</strong>
             <p className="hint" style={{ marginTop: 6 }}>{validation.valid ? "The configuration is structurally valid." : "Correct the issues below before proceeding."}</p>
             {validation.errors?.length > 0 && <ul style={{ marginTop: 8, paddingLeft: 18 }}>{validation.errors.map((e) => <li key={e} style={{ fontSize: ".83rem" }}>{e}</li>)}</ul>}
+            {validation.valid && validation.warnings?.length > 0 && (
+              <div className="validation-warnings">
+                <strong>{validation.warnings.length} advisory {validation.warnings.length === 1 ? "warning" : "warnings"} — configuration is still valid</strong>
+                <ul>
+                  {validation.warnings.map((warning, index) => (
+                    <li key={`${warning.type}-${warning.ruleId ?? warning.field ?? "warning"}-${index}`}>
+                      <strong>{validationWarningLabel(warning.type)}</strong>: {validationWarningDetail(warning)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
@@ -812,6 +866,63 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                 </ul>
               </div>
             )}
+            <div className="rule-changes">
+              <div className="impact-heading">
+                <div>
+                  <h3>Rule Changes</h3>
+                  {changedRuleDiffs.length === 0
+                    ? <p className="impact-empty">No rule changes detected.</p>
+                    : <p className="hint">{changedRuleDiffs.length} {changedRuleDiffs.length === 1 ? "rule" : "rules"} changed.</p>}
+                </div>
+              </div>
+              {changedRuleDiffs.length > 0 && <>
+                <button type="button" className="secondary impact-toggle" onClick={() => setRuleChangesExpanded((expanded) => !expanded)}>
+                  {ruleChangesExpanded ? "Hide rule changes" : `View rule changes (${changedRuleDiffs.length})`}
+                </button>
+                {ruleChangesExpanded && <div className="batch-table-wrap semantic-diff-table-wrap">
+                  <table className="batch-outcomes-table semantic-diff-table">
+                    <thead><tr><th>Rule ID</th><th>Change type</th></tr></thead>
+                    <tbody>{changedRuleDiffs.map((diff) => (
+                      <tr key={diff.ruleId} className={diff.crossesNumericTextBoundary ? "semantic-diff-boundary" : undefined}>
+                        <td data-label="Rule ID">{diff.ruleId ?? "—"}</td>
+                        <td data-label="Change type">{semanticChangeLabel(diff.changeType)}{diff.crossesNumericTextBoundary && " · Numeric/text boundary"}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>}
+              </>}
+            </div>
+            <div className="boundary-impact">
+              <div className="impact-heading">
+                <div>
+                  <h3>Boundary Impact</h3>
+                  <p className="hint">Synthetic weight × value grid showing where routing decisions change.</p>
+                </div>
+              </div>
+              <dl className="impact-summary boundary-impact-summary">
+                <div><dt>Total simulated</dt><dd>{boundarySimulation?.totalSimulated ?? 0}</dd></div>
+                <div><dt>Department changes</dt><dd>{boundarySimulation?.changedDepartments ?? 0}</dd></div>
+                <div><dt>Insurance changes</dt><dd>{boundarySimulation?.changedInsuranceStatuses ?? 0}</dd></div>
+              </dl>
+              {!boundarySimulation || boundarySimulation.totalSimulated === 0 || boundaryChanges.length === 0
+                ? <p className="impact-empty">No boundary changes detected in the simulated range.</p>
+                : <>
+                  <button type="button" className="secondary impact-toggle" onClick={() => setBoundaryExpanded((expanded) => !expanded)}>
+                    {boundaryExpanded ? "Hide changed ranges" : `View changed ranges (${boundaryChanges.length})`}
+                  </button>
+                  {boundaryExpanded && <div className="batch-table-wrap boundary-impact-table-wrap">
+                    <table className="batch-outcomes-table boundary-impact-table">
+                      <thead><tr><th>Changed range</th><th>Grid points</th></tr></thead>
+                      <tbody>{boundaryChanges.map((range, index) => (
+                        <tr key={`${range.minWeightKg}-${range.maxWeightKg}-${range.minValueEur}-${range.maxValueEur}-${index}`}>
+                          <td data-label="Changed range">{boundaryRangeLabel(range)}</td>
+                          <td data-label="Grid points">{range.gridPoints}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>}
+                </>}
+            </div>
             <div className="historical-impact">
               <div className="impact-heading"><div><h3>Historical Impact</h3><p className="hint">Read-only preview of the sampled historical parcels.</p></div></div>
               <dl className="impact-summary">

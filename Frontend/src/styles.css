@@ -207,6 +207,9 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 }
 .result.success { background: var(--green-50);  border-color: var(--green-100); }
 .result.error   { background: var(--red-50);    border-color: var(--red-100); color: var(--red-700); }
+.validation-warnings { background: var(--amber-50); border: 1px solid var(--amber-100); border-left: 3px solid var(--amber-600); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--amber-700); font-size: .82rem; margin-top: 14px; padding: 10px 12px; }
+.validation-warnings ul { margin: 8px 0 0; padding-left: 18px; }
+.validation-warnings li + li { margin-top: 5px; }
 
 /* ── Configuration dry-run and impact preview ─────────────────────────── */
 .regression-line { font-size: 1.05rem; font-weight: 750; margin: 7px 0 4px; }
@@ -215,6 +218,14 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 .dry-run-guidance { background: rgba(255,255,255,.55); border-left: 3px solid var(--red-600); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--slate-700); font-size: .82rem; margin-top: 14px; padding: 10px 12px; }
 .dry-run-difference { display: grid; gap: 5px; margin-top: 8px; }
 .dry-run-difference span { color: var(--slate-500); display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .05em; margin-right: 8px; text-transform: uppercase; }
+.rule-changes { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
+.semantic-diff-table-wrap { margin-top: 14px; }
+.semantic-diff-table { min-width: 420px; }
+.semantic-diff-boundary { background: var(--red-50); box-shadow: inset 3px 0 0 var(--red-600); }
+.boundary-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
+.boundary-impact-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.boundary-impact-table-wrap { margin-top: 14px; }
+.boundary-impact-table { min-width: 420px; }
 .historical-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
 .impact-heading h3, .activation-section h3 { font-size: .96rem; margin: 0; }
 .impact-summary { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0 0; }

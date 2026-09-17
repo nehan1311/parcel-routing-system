@@ -124,8 +124,62 @@ class ConfigServiceTest {
     }
 
     @Test
+    void validDraftReturnsAnalyzerWarningsWithoutChangingValidationResult() {
+        RoutingConfigVersion draft = draftVersion(2, """
+                {
+                  "insurance": {"requiredAboveValueEur": 1000},
+                  "rules": [
+                    {"id": "light", "priority": 1, "condition": {"field": "weight_kg", "operator": "LT", "value": 10}, "department": "Light"},
+                    {"id": "heavy", "priority": 2, "condition": {"field": "weight_kg", "operator": "GT", "value": 20}, "department": "Heavy"}
+                  ]
+                }
+                """);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+
+        ConfigService.DraftValidationResult result = configService.validateDraft(2);
+
+        assertEquals(2, result.version());
+        assertTrue(result.valid());
+        assertTrue(result.errors().isEmpty());
+        assertTrue(result.warnings().stream().anyMatch(warning -> warning.type() == com.parcelrouting.routing.RuleSetAnalyzer.WarningType.GAP));
+    }
+
+    @Test
+    void validDraftWithNoAnalyzerWarningsReturnsEmptyWarnings() {
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draftVersion(2, validConfigJson())));
+
+        ConfigService.DraftValidationResult result = configService.validateDraft(2);
+
+        assertTrue(result.valid());
+        assertTrue(result.errors().isEmpty());
+        assertTrue(result.warnings().isEmpty());
+    }
+
+    @Test
+    void structurallyInvalidDraftStillPropagatesTheSameValidationException() {
+        String duplicatePriorityJson = validConfigJson().replace("\"priority\": 20", "\"priority\": 10");
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draftVersion(2, duplicatePriorityJson)));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> configService.validateDraft(2));
+
+        assertEquals("Duplicate routing rule priority: 10", exception.getMessage());
+    }
+
+    @Test
+    void existingThreeArgumentDraftValidationResultDefaultsWarningsToEmpty() {
+        ConfigService.DraftValidationResult result = new ConfigService.DraftValidationResult(2, true, List.of());
+
+        assertEquals(2, result.version());
+        assertTrue(result.valid());
+        assertTrue(result.errors().isEmpty());
+        assertTrue(result.warnings().isEmpty());
+    }
+
+    @Test
     void dryRunRecordsTheCurrentDraftConfigurationWithoutChangingActiveConfiguration() {
         RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
         RoutingConfigVersion draft = new RoutingConfigVersion(
                 2, ConfigVersionStatus.DRAFT, validConfigJson(), "admin", Instant.now(), null, 1L
         );
@@ -133,14 +187,17 @@ class ConfigServiceTest {
         when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
         when(dryRunSimulator.simulate(any(RoutingConfig.class))).thenReturn(result);
 
-        assertEquals(result, configService.dryRun(2));
+        DryRunSimulator.DryRunResult dryRunResult = configService.dryRun(2);
 
         assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
         assertEquals(validConfigJson(), active.getRulesJson());
         assertTrue(draft.isDryRunPassed());
         assertEquals(validConfigJson(), draft.getDryRunRulesJson());
+        assertEquals(result.totalCases(), dryRunResult.totalCases());
+        assertEquals(result.passedCases(), dryRunResult.passedCases());
+        assertEquals(result.failedCases(), dryRunResult.failedCases());
+        assertEquals(result.failures(), dryRunResult.failures());
         verify(repository).save(draft);
-        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
         verify(dryRunSimulator).simulate(any(RoutingConfig.class));
     }
 
@@ -175,6 +232,7 @@ class ConfigServiceTest {
     @Test
     void successfulDryRunActivatesDraftArchivesPreviousActiveAndKeepsParcelSnapshot() {
         RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
         RoutingConfigVersion draft = draftVersion(2, alternateConfigJson());
         ParcelEntity existingParcel = new ParcelEntity(
                 1, 100, "DE", "{}", ParcelStatus.ROUTED, "Mail", "Mail", "mail-department",
@@ -217,7 +275,6 @@ class ConfigServiceTest {
         assertThrows(ConfigVersionActivationException.class, () -> configService.activate(2L, "admin"));
         assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
         assertEquals(ConfigVersionStatus.DRAFT, draft.getStatus());
-        verify(repository, never()).findByStatus(ConfigVersionStatus.ACTIVE);
     }
 
     @Test

@@ -8,6 +8,9 @@ import com.parcelrouting.routing.Condition;
 import com.parcelrouting.routing.DryRunSimulator;
 import com.parcelrouting.routing.RoutingConfig;
 import com.parcelrouting.routing.Rule;
+import com.parcelrouting.routing.ConfigSemanticDiffer;
+import com.parcelrouting.routing.BoundarySimulator;
+import com.parcelrouting.routing.RuleSetAnalyzer;
 import com.parcelrouting.parcel.ParcelRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -29,6 +32,12 @@ public class ConfigService {
     private final DryRunSimulator dryRunSimulator;
     private final ParcelRepository parcelRepository;
     private final int historicalImpactLimit;
+    private final ConfigSemanticDiffer semanticDiffer = new ConfigSemanticDiffer();
+    private final RuleSetAnalyzer ruleSetAnalyzer = new RuleSetAnalyzer();
+    private final BoundarySimulator boundarySimulator = new BoundarySimulator(
+            0, 50, 0.5,
+            0, 5_000, 25
+    );
 
     public ConfigService(
             RoutingConfigVersionRepository routingConfigVersionRepository,
@@ -83,7 +92,8 @@ public class ConfigService {
         try {
             RoutingConfig routingConfig = parseRoutingConfig(draft.getRulesJson());
             configValidator.validate(routingConfig);
-            return new DraftValidationResult(version, true, List.of());
+            List<RuleSetAnalyzer.Warning> warnings = ruleSetAnalyzer.analyze(routingConfig);
+            return new DraftValidationResult(version, true, List.of(), warnings);
         } catch (IllegalStateException exception) {
             throw new IllegalArgumentException("Draft configuration is invalid: " + exception.getMessage(), exception);
         }
@@ -108,9 +118,20 @@ public class ConfigService {
         if (historicalImpact == null) {
             historicalImpact = new DryRunSimulator.HistoricalImpact(0, 0, 0, 0, List.of(), List.of());
         }
+        List<ConfigSemanticDiffer.RuleDiff> semanticDiff = List.of();
+        BoundarySimulator.BoundarySimulationResult boundarySimulation = BoundarySimulator.empty();
+        try {
+            RoutingConfig activeConfiguration = getActiveConfigWithVersion().routingConfig();
+            semanticDiff = semanticDiffer.diff(activeConfiguration, configuration);
+            boundarySimulation = boundarySimulator.simulate(activeConfiguration, configuration);
+        } catch (IllegalStateException exception) {
+            if (!"No active routing configuration exists".equals(exception.getMessage())) {
+                throw exception;
+            }
+        }
         DryRunSimulator.DryRunResult result = new DryRunSimulator.DryRunResult(
                 regressionResult.totalCases(), regressionResult.passedCases(), regressionResult.failedCases(),
-                regressionResult.failures(), historicalImpact
+                regressionResult.failures(), historicalImpact, semanticDiff, boundarySimulation
         );
         draft.recordDryRun(Instant.now(), result.failedCases() == 0);
         routingConfigVersionRepository.save(draft);
@@ -280,7 +301,12 @@ public class ConfigService {
     private record InsuranceSnapshot(int requiredAboveValueEur) {
     }
 
-    public record DraftValidationResult(int version, boolean valid, List<String> errors) {
+    public record DraftValidationResult(
+            int version, boolean valid, List<String> errors, List<RuleSetAnalyzer.Warning> warnings
+    ) {
+        public DraftValidationResult(int version, boolean valid, List<String> errors) {
+            this(version, valid, errors, List.of());
+        }
     }
 
     public record ConfigHistoryEntry(

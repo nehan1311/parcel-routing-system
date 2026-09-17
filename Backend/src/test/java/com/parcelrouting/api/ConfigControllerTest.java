@@ -121,6 +121,17 @@ class ConfigControllerTest {
     }
 
     @Test
+    void structuralValidationFailureStillReturnsTheSameBadRequestResponse() throws Exception {
+        when(configService.validateDraft(2))
+                .thenThrow(new IllegalArgumentException("Duplicate routing rule priority: 10"));
+
+        mockMvc.perform(post("/api/config/drafts/2/validate")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Duplicate routing rule priority: 10"));
+    }
+
+    @Test
     void adminRunsDryRunByDelegatingToConfigService() throws Exception {
         when(configService.dryRun(2)).thenReturn(passingDryRun());
 
