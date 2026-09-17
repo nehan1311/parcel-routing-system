@@ -212,6 +212,7 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 .regression-line { font-size: 1.05rem; font-weight: 750; margin: 7px 0 4px; }
 .regression-line.success { color: var(--green-700); }
 .regression-line.failure { color: var(--red-700); }
+.dry-run-guidance { background: rgba(255,255,255,.55); border-left: 3px solid var(--red-600); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--slate-700); font-size: .82rem; margin-top: 14px; padding: 10px 12px; }
 .dry-run-difference { display: grid; gap: 5px; margin-top: 8px; }
 .dry-run-difference span { color: var(--slate-500); display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .05em; margin-right: 8px; text-transform: uppercase; }
 .historical-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }

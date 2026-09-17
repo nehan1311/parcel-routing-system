@@ -788,6 +788,13 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
               {dryRun.failedCases === 0 ? "✓" : "✕"} {dryRun.passedCases}/{dryRun.totalCases} passed
             </p>
             <p className="hint">This simulation does not affect live routing.</p>
+            {dryRun.failedCases > 0 && (
+              <p className="dry-run-guidance">
+                Dry-run failed because this configuration changes the expected routing behavior for one or more regression cases. Review the failed cases before activation.
+                <br /><br />
+                If this is an intentional business-rule change, the corresponding regression expectations must be updated as part of the rule-change process before this configuration can be activated.
+              </p>
+            )}
             {dryRun.failures?.length > 0 && (
               <div className="record-errors">
                 <strong>Failure details</strong>
