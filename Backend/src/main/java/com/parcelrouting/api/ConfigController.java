@@ -29,9 +29,12 @@ public class ConfigController {
 
     @PostMapping("/drafts")
     @PreAuthorize("hasRole('ADMIN')")
-    public DraftResponse createDraft(@RequestBody RoutingConfig configuration, Authentication authentication) {
-        RoutingConfigVersion draft = configService.createDraft(configuration, authentication.getName());
-        return new DraftResponse(draft.getVersion(), draft.getStatus(), configuration);
+    public DraftResponse createDraft(@RequestBody CreateDraftRequest request, Authentication authentication) {
+        RoutingConfig configuration = request.toRoutingConfig();
+        RoutingConfigVersion draft = request.reason() == null
+                ? configService.createDraft(configuration, authentication.getName())
+                : configService.createDraft(configuration, authentication.getName(), request.reason());
+        return new DraftResponse(draft.getVersion(), draft.getStatus(), configuration, draft.getReason());
     }
 
     @PostMapping("/drafts/{version}/validate")
@@ -59,7 +62,8 @@ public class ConfigController {
         return new DraftResponse(
                 activatedVersion.getVersion(),
                 activatedVersion.getStatus(),
-                null
+                null,
+                activatedVersion.getReason()
         );
     }
 
@@ -67,7 +71,7 @@ public class ConfigController {
     @PreAuthorize("hasRole('ADMIN')")
     public ActiveConfigResponse activeConfiguration() {
         ActiveRoutingConfig active = configService.getActiveConfigWithVersion();
-        return new ActiveConfigResponse(active.version(), active.routingConfig());
+        return new ActiveConfigResponse(active.version(), active.routingConfig(), active.reason());
     }
 
     @GetMapping("/history")
@@ -83,16 +87,28 @@ public class ConfigController {
         return new DraftResponse(
                 activatedVersion.getVersion(),
                 activatedVersion.getStatus(),
-                null
+                null,
+                activatedVersion.getReason()
         );
     }
 
-    public record DraftResponse(int version, ConfigVersionStatus status, RoutingConfig configuration) {
+    public record DraftResponse(
+            int version, ConfigVersionStatus status, RoutingConfig configuration, String reason
+    ) {
     }
 
-    public record ActiveConfigResponse(int version, RoutingConfig configuration) {
+    public record ActiveConfigResponse(int version, RoutingConfig configuration, String reason) {
+        public ActiveConfigResponse(int version, RoutingConfig configuration) {
+            this(version, configuration, null);
+        }
     }
 
     public record ActivateRequest(List<String> acknowledgedRuleChanges) {
+    }
+
+    public record CreateDraftRequest(int insuranceThresholdEur, List<com.parcelrouting.routing.Rule> rules, String reason) {
+        public RoutingConfig toRoutingConfig() {
+            return new RoutingConfig(insuranceThresholdEur, rules);
+        }
     }
 }

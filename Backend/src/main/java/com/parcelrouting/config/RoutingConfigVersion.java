@@ -54,6 +54,9 @@ public class RoutingConfigVersion {
     @Column(name = "based_on_version_id")
     private Long basedOnVersionId;
 
+    @Column(name = "reason", length = 500)
+    private String reason;
+
     protected RoutingConfigVersion() {
     }
 
@@ -66,6 +69,19 @@ public class RoutingConfigVersion {
             Instant activatedAt,
             Long basedOnVersionId
     ) {
+        this(version, status, rulesJson, createdBy, createdAt, activatedAt, basedOnVersionId, null);
+    }
+
+    public RoutingConfigVersion(
+            int version,
+            ConfigVersionStatus status,
+            String rulesJson,
+            String createdBy,
+            Instant createdAt,
+            Instant activatedAt,
+            Long basedOnVersionId,
+            String reason
+    ) {
         this.version = version;
         this.status = status;
         this.rulesJson = rulesJson;
@@ -73,6 +89,7 @@ public class RoutingConfigVersion {
         this.createdAt = createdAt;
         this.activatedAt = activatedAt;
         this.basedOnVersionId = basedOnVersionId;
+        this.reason = reason;
     }
 
     public Long getId() {
@@ -121,6 +138,10 @@ public class RoutingConfigVersion {
 
     public Long getBasedOnVersionId() {
         return basedOnVersionId;
+    }
+
+    public String getReason() {
+        return reason;
     }
 
     public void recordDryRun(Instant completedAt, boolean passed) {

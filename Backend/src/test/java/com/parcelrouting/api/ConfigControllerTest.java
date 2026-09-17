@@ -92,6 +92,26 @@ class ConfigControllerTest {
     }
 
     @Test
+    void adminCreatesDraftWithReasonAndReceivesIt() throws Exception {
+        RoutingConfigVersion draft = new RoutingConfigVersion(
+                2, ConfigVersionStatus.DRAFT, "{}", "admin", Instant.now(), null, 1L,
+                "Document business reason"
+        );
+        when(configService.createDraft(any(), eq("admin"), eq("Document business reason"))).thenReturn(draft);
+
+        mockMvc.perform(post("/api/config/drafts")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validConfigurationJson().replace(
+                                "\"rules\": [", "\"reason\": \"Document business reason\",\n  \"rules\": ["
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reason").value("Document business reason"));
+
+        verify(configService).createDraft(any(), eq("admin"), eq("Document business reason"));
+    }
+
+    @Test
     void operatorIsForbidden() throws Exception {
         mockMvc.perform(post("/api/config/drafts")
                         .with(basicAuthentication("operator", OPERATOR_PASSWORD))

@@ -103,6 +103,7 @@ class ConfigServiceTest {
         assertTrue(draft.getCreatedAt().isBefore(Instant.now().plusSeconds(1)));
         assertEquals(latest.getId(), draft.getBasedOnVersionId());
         assertTrue(draft.getRulesJson().contains("heavy-department"));
+        assertEquals(null, draft.getReason());
         assertEquals(ConfigVersionStatus.ACTIVE, active.getStatus());
         assertEquals(validConfigJson(), active.getRulesJson());
         verify(repository).save(draft);
@@ -121,6 +122,42 @@ class ConfigServiceTest {
         assertTrue(exception.getMessage().contains("Insurance threshold"));
         verify(repository, never()).findTopByOrderByVersionDesc();
         verify(repository, never()).save(any(RoutingConfigVersion.class));
+    }
+
+    @Test
+    void createsDraftWithReasonAndPersistsIt() {
+        when(repository.findTopByOrderByVersionDesc()).thenReturn(java.util.Optional.empty());
+        when(repository.save(any(RoutingConfigVersion.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        RoutingConfigVersion draft = configService.createDraft(validConfig(), "admin", "Increase heavy parcel coverage");
+
+        assertEquals("Increase heavy parcel coverage", draft.getReason());
+        verify(repository).save(draft);
+    }
+
+    @Test
+    void oldVersionWithoutReasonLoadsWithNullReason() {
+        RoutingConfigVersion oldVersion = draftVersion(2, validConfigJson());
+        when(repository.findAllByOrderByVersionDesc()).thenReturn(List.of(oldVersion));
+
+        List<ConfigService.ConfigHistoryEntry> history = configService.history();
+
+        assertEquals(1, history.size());
+        assertEquals(null, history.getFirst().reason());
+    }
+
+    @Test
+    void historyIncludesPersistedReason() {
+        RoutingConfigVersion version = new RoutingConfigVersion(
+                2, ConfigVersionStatus.DRAFT, validConfigJson(), "admin", Instant.now(), null, 1L,
+                "Document threshold adjustment"
+        );
+        when(repository.findAllByOrderByVersionDesc()).thenReturn(List.of(version));
+
+        List<ConfigService.ConfigHistoryEntry> history = configService.history();
+
+        assertEquals("Document threshold adjustment", history.getFirst().reason());
     }
 
     @Test

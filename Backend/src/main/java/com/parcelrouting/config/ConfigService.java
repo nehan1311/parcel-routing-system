@@ -63,9 +63,17 @@ public class ConfigService {
 
     @Transactional
     public RoutingConfigVersion createDraft(RoutingConfig routingConfig, String createdBy) {
+        return createDraft(routingConfig, createdBy, null);
+    }
+
+    @Transactional
+    public RoutingConfigVersion createDraft(RoutingConfig routingConfig, String createdBy, String reason) {
         configValidator.validate(routingConfig);
         if (createdBy == null || createdBy.isBlank()) {
             throw new IllegalArgumentException("Draft creator must not be blank");
+        }
+        if (reason != null && reason.length() > 500) {
+            throw new IllegalArgumentException("Draft reason must not exceed 500 characters");
         }
 
         Optional<RoutingConfigVersion> latest = routingConfigVersionRepository.findTopByOrderByVersionDesc();
@@ -79,7 +87,8 @@ public class ConfigService {
                 createdBy,
                 Instant.now(),
                 null,
-                basedOnVersionId
+                basedOnVersionId,
+                reason
         );
         return routingConfigVersionRepository.save(draft);
     }
@@ -170,7 +179,8 @@ public class ConfigService {
                         version.getCreatedAt(),
                         version.getActivatedBy(),
                         version.getActivatedAt(),
-                        version.getBasedOnVersionId()
+                        version.getBasedOnVersionId(),
+                        version.getReason()
                 ))
                 .toList();
     }
@@ -209,7 +219,8 @@ public class ConfigService {
                 activatedBy,
                 Instant.now(),
                 null,
-                target.getId()
+                target.getId(),
+                target.getReason()
         );
         DryRunSimulator.DryRunResult dryRunResult = dryRunSimulator.simulate(targetConfiguration);
         rollbackDraft.recordDryRun(Instant.now(), dryRunResult.failedCases() == 0);
@@ -302,7 +313,8 @@ public class ConfigService {
         return new ActiveRoutingConfig(
                 activeVersion.getId(),
                 activeVersion.getVersion(),
-                parseRoutingConfig(activeVersion.getRulesJson())
+                parseRoutingConfig(activeVersion.getRulesJson()),
+                activeVersion.getReason()
         );
     }
 
@@ -375,8 +387,20 @@ public class ConfigService {
             Instant createdAt,
             String activatedBy,
             Instant activatedAt,
-            Long predecessorVersionId
+            Long predecessorVersionId,
+            String reason
     ) {
+        public ConfigHistoryEntry(
+                int version,
+                ConfigVersionStatus status,
+                String createdBy,
+                Instant createdAt,
+                String activatedBy,
+                Instant activatedAt,
+                Long predecessorVersionId
+        ) {
+            this(version, status, createdBy, createdAt, activatedBy, activatedAt, predecessorVersionId, null);
+        }
     }
 
     private Rule parseRule(JsonNode ruleNode) throws JsonProcessingException {
