@@ -67,6 +67,7 @@ button, input, select, textarea { font: inherit; }
 .eyebrow { color: var(--brand-500); font-size: .7rem; font-weight: 800; letter-spacing: .12em; margin: 0 0 6px; text-transform: uppercase; }
 .hint    { color: var(--slate-500); font-size: .82rem; margin: 4px 0 0; }
 .field-help { color: var(--slate-500); font-size: .75rem; line-height: 1.4; margin-top: 2px; }
+.field-error { color: var(--red-700); font-size: .75rem; font-weight: 600; line-height: 1.35; margin-top: 1px; }
 .lede    { color: var(--slate-600); font-size: .9rem; margin: 6px 0 0; }
 
 /* ── Buttons ───────────────────────────────────────────────────────────── */
@@ -98,6 +99,8 @@ input, select {
   color: var(--slate-900); min-height: 38px; padding: 8px 11px; transition: border-color var(--transition), box-shadow var(--transition); width: 100%;
 }
 input:focus, select:focus { border-color: var(--brand-500); box-shadow: 0 0 0 3px rgba(45,114,200,.15); outline: none; }
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--red-600); }
+input[aria-invalid="true"]:focus, select[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px rgba(176,48,48,.15); }
 input::placeholder { color: var(--slate-400); }
 select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; padding-right: 32px; }
 form { display: grid; gap: 14px; margin-top: 20px; }
@@ -204,6 +207,28 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 }
 .result.success { background: var(--green-50);  border-color: var(--green-100); }
 .result.error   { background: var(--red-50);    border-color: var(--red-100); color: var(--red-700); }
+
+/* ── Configuration dry-run and impact preview ─────────────────────────── */
+.regression-line { font-size: 1.05rem; font-weight: 750; margin: 7px 0 4px; }
+.regression-line.success { color: var(--green-700); }
+.regression-line.failure { color: var(--red-700); }
+.dry-run-difference { display: grid; gap: 5px; margin-top: 8px; }
+.dry-run-difference span { color: var(--slate-500); display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .05em; margin-right: 8px; text-transform: uppercase; }
+.historical-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
+.impact-heading h3, .activation-section h3 { font-size: .96rem; margin: 0; }
+.impact-summary { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0 0; }
+.impact-summary > div { background: rgba(255,255,255,.58); border: 1px solid var(--slate-200); border-radius: var(--radius-sm); padding: 10px 12px; }
+.impact-summary dd { font-size: 1.05rem; }
+.impact-empty { color: var(--slate-500); font-size: .86rem; margin: 14px 0 0; }
+.impact-toggle { margin-top: 16px; }
+.impact-table-wrap { margin-top: 14px; }
+.impact-table { min-width: 720px; }
+.activation-modal { max-width: 620px; }
+.activation-section { border-top: 1px solid var(--slate-200); margin-top: 18px; padding-top: 18px; }
+.activation-section ul { margin: 10px 0 0; padding-left: 18px; }
+.activation-section li { font-size: .88rem; margin: 5px 0; }
+.activation-section .impact-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.activation-actions { justify-content: flex-end; }
 
 /* ── Status badges ─────────────────────────────────────────────────────── */
 .status {
@@ -367,7 +392,7 @@ dd { font-weight: 600; margin: 4px 0 0; overflow-wrap: anywhere; }
   .batch-outcomes-heading, .batch-result-heading { flex-direction: column; gap: 10px; }
   .form-row, .rule-fields, .batch-filters,
   .decision-grid, .batch-summary, .approval-details,
-  .history-entry dl { grid-template-columns: 1fr; }
+  .history-entry dl, .impact-summary, .activation-section .impact-summary { grid-template-columns: 1fr; }
   .batch-outcomes-table, .batch-outcomes-table tbody,
   .batch-outcomes-table tr, .batch-outcomes-table td { display: block; min-width: 0; width: 100%; }
   .batch-outcomes-table thead { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; width: 1px; }
@@ -378,6 +403,13 @@ dd { font-weight: 600; margin: 4px 0 0; overflow-wrap: anywhere; }
   .batch-outcomes-table td::before { color: var(--slate-500); content: attr(data-label); font-size: .68rem; font-weight: 700; text-align: left; text-transform: uppercase; white-space: nowrap; }
   .batch-outcomes-table td.batch-empty { display: block; }
   .batch-outcomes-table td.batch-empty::before { content: none; }
+  .impact-table, .impact-table tbody, .impact-table tr, .impact-table td { display: block; min-width: 0; width: 100%; }
+  .impact-table thead { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; width: 1px; }
+  .impact-table-wrap { border: none; overflow: visible; }
+  .impact-table tr { border: 1.5px solid var(--slate-200); border-radius: var(--radius-md); margin-bottom: 10px; padding: 6px 14px; }
+  .impact-table td { align-items: baseline; border-bottom: 1px solid var(--slate-100); display: flex; gap: 14px; justify-content: space-between; padding: 9px 0; text-align: right; }
+  .impact-table td::before { color: var(--slate-500); content: attr(data-label); font-size: .68rem; font-weight: 700; text-align: left; text-transform: uppercase; white-space: nowrap; }
+  .impact-table tr:last-child td:last-child { border-bottom: none; }
   .batch-pagination { flex-direction: column; align-items: stretch; }
   .batch-pagination > button, .export-csv { width: 100%; }
   .workflow { flex-wrap: wrap; gap: 5px; }

@@ -45,6 +45,9 @@ public class ParcelEntity {
     @Column(name = "matched_rule_id")
     private String matchedRuleId;
 
+    @Column(name = "insurance_required")
+    private Boolean insuranceRequired;
+
     @Column(name = "routing_config_version_id")
     private Long routingConfigVersionId;
 
@@ -74,6 +77,25 @@ public class ParcelEntity {
             String approvedBy,
             Instant approvedAt
     ) {
+        this(weightKg, valueEur, destinationCountry, attributesJson, status, department, predictedDepartment,
+                matchedRuleId, null, routingConfigVersionId, createdAt, approvedBy, approvedAt);
+    }
+
+    public ParcelEntity(
+            double weightKg,
+            double valueEur,
+            String destinationCountry,
+            String attributesJson,
+            ParcelStatus status,
+            String department,
+            String predictedDepartment,
+            String matchedRuleId,
+            Boolean insuranceRequired,
+            Long routingConfigVersionId,
+            Instant createdAt,
+            String approvedBy,
+            Instant approvedAt
+    ) {
         this.weightKg = weightKg;
         this.valueEur = valueEur;
         this.destinationCountry = destinationCountry;
@@ -82,6 +104,7 @@ public class ParcelEntity {
         this.department = department;
         this.predictedDepartment = predictedDepartment;
         this.matchedRuleId = matchedRuleId;
+        this.insuranceRequired = insuranceRequired;
         this.routingConfigVersionId = routingConfigVersionId;
         this.createdAt = createdAt;
         this.approvedBy = approvedBy;
@@ -122,6 +145,10 @@ public class ParcelEntity {
 
     public String getMatchedRuleId() {
         return matchedRuleId;
+    }
+
+    public Boolean getInsuranceRequired() {
+        return insuranceRequired;
     }
 
     public Long getRoutingConfigVersionId() {

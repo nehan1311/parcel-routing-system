@@ -8,6 +8,10 @@ import com.parcelrouting.routing.Condition;
 import com.parcelrouting.routing.DryRunSimulator;
 import com.parcelrouting.routing.RoutingConfig;
 import com.parcelrouting.routing.Rule;
+import com.parcelrouting.parcel.ParcelRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,17 +27,26 @@ public class ConfigService {
     private final ObjectMapper objectMapper;
     private final ConfigValidator configValidator;
     private final DryRunSimulator dryRunSimulator;
+    private final ParcelRepository parcelRepository;
+    private final int historicalImpactLimit;
 
     public ConfigService(
             RoutingConfigVersionRepository routingConfigVersionRepository,
             ObjectMapper objectMapper,
             ConfigValidator configValidator,
-            DryRunSimulator dryRunSimulator
+            DryRunSimulator dryRunSimulator,
+            ParcelRepository parcelRepository,
+            @Value("${parcel.config.historical-impact-limit:100}") int historicalImpactLimit
     ) {
         this.routingConfigVersionRepository = routingConfigVersionRepository;
         this.objectMapper = objectMapper;
         this.configValidator = configValidator;
         this.dryRunSimulator = dryRunSimulator;
+        this.parcelRepository = parcelRepository;
+        if (historicalImpactLimit < 1) {
+            throw new IllegalArgumentException("Historical impact limit must be at least 1");
+        }
+        this.historicalImpactLimit = historicalImpactLimit;
     }
 
     @Transactional
@@ -84,7 +97,21 @@ public class ConfigService {
             throw new ConfigVersionStateException(version);
         }
 
-        DryRunSimulator.DryRunResult result = dryRunSimulator.simulate(parseRoutingConfig(draft.getRulesJson()));
+        RoutingConfig configuration = parseRoutingConfig(draft.getRulesJson());
+        configValidator.validate(configuration);
+        DryRunSimulator.DryRunResult regressionResult = dryRunSimulator.simulate(configuration);
+        Page<com.parcelrouting.parcel.ParcelEntity> historicalPage =
+                parcelRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, historicalImpactLimit));
+        DryRunSimulator.HistoricalImpact historicalImpact = dryRunSimulator.analyzeHistorical(
+                configuration, historicalPage == null ? List.of() : historicalPage.getContent()
+        );
+        if (historicalImpact == null) {
+            historicalImpact = new DryRunSimulator.HistoricalImpact(0, 0, 0, 0, List.of(), List.of());
+        }
+        DryRunSimulator.DryRunResult result = new DryRunSimulator.DryRunResult(
+                regressionResult.totalCases(), regressionResult.passedCases(), regressionResult.failedCases(),
+                regressionResult.failures(), historicalImpact
+        );
         draft.recordDryRun(Instant.now(), result.failedCases() == 0);
         routingConfigVersionRepository.save(draft);
         return result;
@@ -194,6 +221,7 @@ public class ConfigService {
 
         return new ActiveRoutingConfig(
                 activeVersion.getId(),
+                activeVersion.getVersion(),
                 parseRoutingConfig(activeVersion.getRulesJson())
         );
     }

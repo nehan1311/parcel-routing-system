@@ -2,7 +2,9 @@ package com.parcelrouting.routing;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.parcelrouting.parcel.Parcel;
+import com.parcelrouting.parcel.ParcelEntity;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
@@ -45,6 +47,53 @@ public class DryRunSimulator {
         return new DryRunResult(totalCases, totalCases - failures.size(), failures.size(), List.copyOf(failures));
     }
 
+    /** Evaluates supplied persisted parcels only; it deliberately does not save or mutate them. */
+    public HistoricalImpact analyzeHistorical(RoutingConfig draftConfiguration, List<ParcelEntity> historicalParcels) {
+        List<HistoricalParcelFailure> failures = new ArrayList<>();
+        List<HistoricalParcelChange> changes = new ArrayList<>();
+        int departmentChanges = 0;
+        int insuranceChanges = 0;
+        int matchedRuleChanges = 0;
+
+        for (ParcelEntity entity : historicalParcels) {
+            try {
+                Map<String, Object> attributes = objectMapper.readValue(
+                        entity.getAttributesJson() == null ? "{}" : entity.getAttributesJson(),
+                        new com.fasterxml.jackson.core.type.TypeReference<>() { }
+                );
+                Parcel parcel = new Parcel(entity.getWeightKg(), entity.getValueEur(), entity.getDestinationCountry(), attributes);
+                RoutingDecision proposed = routingEngine.evaluate(parcel, draftConfiguration);
+
+                if (entity.getInsuranceRequired() == null) {
+                    throw new IllegalStateException("Persisted insurance routing snapshot is unavailable");
+                }
+                boolean departmentChanged = !java.util.Objects.equals(
+                        entity.getPredictedDepartment(), proposed.predictedDepartment()
+                );
+                boolean matchedRuleChanged = !java.util.Objects.equals(entity.getMatchedRuleId(), proposed.matchedRuleId());
+                if (departmentChanged) {
+                    departmentChanges++;
+                }
+                if (matchedRuleChanged) {
+                    matchedRuleChanges++;
+                }
+                if (entity.getInsuranceRequired() != proposed.insuranceRequired()) {
+                    insuranceChanges++;
+                }
+                if (departmentChanged || matchedRuleChanged || entity.getInsuranceRequired() != proposed.insuranceRequired()) {
+                    changes.add(new HistoricalParcelChange(
+                            entity.getId(), entity.getPredictedDepartment(), proposed.predictedDepartment(),
+                            entity.getMatchedRuleId(), proposed.matchedRuleId()
+                    ));
+                }
+            } catch (Exception exception) {
+                failures.add(new HistoricalParcelFailure(entity.getId(), exception.getMessage()));
+            }
+        }
+        return new HistoricalImpact(historicalParcels.size(), departmentChanges, insuranceChanges,
+                matchedRuleChanges, List.copyOf(changes), List.copyOf(failures));
+    }
+
     private RegressionFixtures loadFixtures() {
         ClassPathResource resource = new ClassPathResource(FIXTURE_RESOURCE);
         try (InputStream inputStream = resource.getInputStream()) {
@@ -60,21 +109,65 @@ public class DryRunSimulator {
                 && java.util.Objects.equals(expected.matchedRuleId(), actual.matchedRuleId());
     }
 
-    public record DryRunResult(int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures) {
+    public record DryRunResult(
+            int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures,
+            HistoricalImpact historicalImpact
+    ) {
+        public DryRunResult(int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures) {
+            this(totalCases, passedCases, failedCases, failures, HistoricalImpact.empty());
+        }
+
+        @JsonProperty("overallStatus")
+        public String overallStatus() {
+            return failedCases == 0 ? "PASS" : "FAIL";
+        }
     }
 
     public record DryRunFailure(String caseName, ExpectedDecision expected, ActualDecision actual, String error) {
     }
 
     public record ExpectedDecision(boolean insuranceRequired, String predictedDepartment, String matchedRuleId) {
+        @JsonProperty("department")
+        public String department() {
+            return predictedDepartment;
+        }
     }
 
     public record ActualDecision(boolean insuranceRequired, String predictedDepartment, String matchedRuleId) {
+        @JsonProperty("department")
+        public String department() {
+            return predictedDepartment;
+        }
         private static ActualDecision from(RoutingDecision decision) {
             return new ActualDecision(
                     decision.insuranceRequired(), decision.predictedDepartment(), decision.matchedRuleId()
             );
         }
+    }
+
+    public record HistoricalImpact(
+            int parcelsAnalyzed,
+            int departmentChanges,
+            int insuranceChanges,
+            int matchedRuleChanges,
+            List<HistoricalParcelChange> changes,
+            List<HistoricalParcelFailure> failures
+    ) {
+        static HistoricalImpact empty() {
+            return new HistoricalImpact(0, 0, 0, 0, List.of(), List.of());
+        }
+    }
+
+    public record HistoricalParcelChange(
+            Long parcelId,
+            String currentDepartment,
+            String proposedDepartment,
+            String currentRule,
+            String proposedRule
+    ) {
+    }
+
+    public record HistoricalParcelFailure(Long parcelId, String error) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

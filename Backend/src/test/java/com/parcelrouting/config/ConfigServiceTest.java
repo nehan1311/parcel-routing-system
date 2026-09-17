@@ -6,6 +6,7 @@ import com.parcelrouting.routing.RoutingConfig;
 import com.parcelrouting.routing.DryRunSimulator;
 import com.parcelrouting.parcel.ParcelEntity;
 import com.parcelrouting.parcel.ParcelStatus;
+import com.parcelrouting.parcel.ParcelRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -19,13 +20,16 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.argThat;
+import org.springframework.data.domain.Page;
 
 class ConfigServiceTest {
 
     private final RoutingConfigVersionRepository repository = mock(RoutingConfigVersionRepository.class);
     private final DryRunSimulator dryRunSimulator = mock(DryRunSimulator.class);
+    private final ParcelRepository parcelRepository = mock(ParcelRepository.class);
     private final ConfigService configService = new ConfigService(
-            repository, new ObjectMapper(), new ConfigValidator(), dryRunSimulator
+            repository, new ObjectMapper(), new ConfigValidator(), dryRunSimulator, parcelRepository, 100
     );
 
     @Test
@@ -148,6 +152,24 @@ class ConfigServiceTest {
         when(repository.findByVersion(1)).thenReturn(java.util.Optional.of(activeVersion(validConfigJson())));
         assertThrows(ConfigVersionStateException.class, () -> configService.dryRun(1));
         verify(dryRunSimulator, never()).simulate(any(RoutingConfig.class));
+    }
+
+    @Test
+    void dryRunUsesConfiguredHistoricalAnalysisLimit() {
+        ConfigService limitedService = new ConfigService(
+                repository, new ObjectMapper(), new ConfigValidator(), dryRunSimulator, parcelRepository, 7
+        );
+        RoutingConfigVersion draft = draftVersion(2, validConfigJson());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(dryRunSimulator.simulate(any(RoutingConfig.class)))
+                .thenReturn(new DryRunSimulator.DryRunResult(8, 8, 0, List.of()));
+        when(parcelRepository.findAllByOrderByCreatedAtDesc(any())).thenReturn(Page.empty());
+        when(dryRunSimulator.analyzeHistorical(any(), any()))
+                .thenReturn(new DryRunSimulator.HistoricalImpact(0, 0, 0, 0, List.of(), List.of()));
+
+        limitedService.dryRun(2);
+
+        verify(parcelRepository).findAllByOrderByCreatedAtDesc(argThat(pageable -> pageable.getPageSize() == 7));
     }
 
     @Test

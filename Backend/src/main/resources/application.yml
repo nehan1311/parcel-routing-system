@@ -30,6 +30,9 @@ management:
         include: health
 
 parcel:
+  config:
+    historical-impact-limit: ${PARCEL_HISTORICAL_IMPACT_LIMIT:100}
+
   batch:
     max-upload-size: ${PARCEL_BATCH_MAX_UPLOAD_SIZE:10MB}
 

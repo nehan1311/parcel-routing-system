@@ -26,6 +26,7 @@ class DryRunSimulatorTest {
         assertEquals(8, result.totalCases());
         assertEquals(8, result.passedCases());
         assertEquals(0, result.failedCases());
+        assertEquals("PASS", result.overallStatus());
         assertTrue(result.failures().isEmpty());
     }
 
@@ -40,6 +41,7 @@ class DryRunSimulatorTest {
         assertEquals(8, result.totalCases());
         assertEquals(7, result.passedCases());
         assertEquals(1, result.failedCases());
+        assertEquals("FAIL", result.overallStatus());
         assertFalse(result.failures().isEmpty());
         DryRunSimulator.DryRunFailure failure = result.failures().getFirst();
         assertEquals("1000 EUR does not require insurance", failure.caseName());

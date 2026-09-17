@@ -97,6 +97,10 @@ export function activateConfigDraft(version, credentials) {
   return request(`/api/config/drafts/${version}/activate`, { method: "POST" }, credentials);
 }
 
+export function getActiveConfig(credentials) {
+  return request("/api/config/active", { method: "GET" }, credentials);
+}
+
 export function getConfigHistory(credentials) {
   return request("/api/config/history", { method: "GET" }, credentials);
 }

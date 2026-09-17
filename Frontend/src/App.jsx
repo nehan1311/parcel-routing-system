@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  activateConfigDraft, createConfigDraft, getConfigHistory, rollbackConfig, runConfigDryRun,
+  activateConfigDraft, createConfigDraft, getActiveConfig, getConfigHistory, rollbackConfig, runConfigDryRun,
   approveParcel, authenticate, getPendingApprovals, isAuthenticationError,
   submitParcel, uploadBatch, validateConfigDraft,
 } from "./api/parcelApi";
@@ -32,6 +32,8 @@ const operatorOptions = [
   { value: "IN",  label: "In (comma-separated)" },
 ];
 const departments = ["Mail", "Regular", "Heavy"];
+const identifierPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const textOperatorValues = new Set(["EQ", "NEQ", "IN"]);
 
 const errText  = (e) => e instanceof Error ? e.message : "The request could not be completed.";
 const csvCell  = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
@@ -115,6 +117,102 @@ function SectionHeading({ title, hint, action }) {
   );
 }
 
+function preventUnsignedNumberKeys(event) {
+  if (["-", "+", "e", "E"].includes(event.key)) event.preventDefault();
+}
+
+function nonNegativeNumberError(value, label, { integer = false } = {}) {
+  if (value.trim() === "") return `${label} is required.`;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return `${label} must be a number.`;
+  if (number < 0) return `${label} cannot be negative.`;
+  if (integer && !Number.isInteger(number)) return `${label} must be a whole number.`;
+  return "";
+}
+
+function validateConfigForm(form) {
+  const errors = {};
+  const thresholdError = nonNegativeNumberError(form.insuranceThresholdEur, "Insurance threshold", { integer: true });
+  if (thresholdError) errors.insuranceThresholdEur = thresholdError;
+  const ruleIds = new Map();
+
+  form.rules.forEach((rule, index) => {
+    const key = (field) => `rules.${index}.${field}`;
+    const id = rule.id.trim();
+    if (!id) errors[key("id")] = "Rule ID is required.";
+    else if (!identifierPattern.test(id)) errors[key("id")] = "Use letters, numbers, hyphens, or underscores; start with a letter.";
+    else if (id.length > 64) errors[key("id")] = "Rule ID must be 64 characters or fewer.";
+    else if (ruleIds.has(id)) {
+      errors[key("id")] = "Rule IDs must be unique.";
+      errors[`rules.${ruleIds.get(id)}.id`] = "Rule IDs must be unique.";
+    } else ruleIds.set(id, index);
+
+    const priorityError = nonNegativeNumberError(rule.priority, "Priority", { integer: true });
+    if (priorityError) errors[key("priority")] = priorityError;
+    else if (Number(rule.priority) < 1) errors[key("priority")] = "Priority must be a positive integer.";
+
+    const isAttribute = rule.field.startsWith("attribute:");
+    const field = isAttribute ? "attribute" : rule.field;
+    if (!conditionFields.some((option) => option.value === field)) errors[key("field")] = "Please select a valid condition field.";
+    if (isAttribute && !identifierPattern.test(rule.field.slice("attribute:".length))) errors[key("attribute")] = "Attribute name must start with a letter and use only letters, numbers, hyphens, or underscores.";
+    if (!operatorOptions.some((option) => option.value === rule.operator)
+        || ((!['weight_kg', 'value_eur'].includes(rule.field)) && !textOperatorValues.has(rule.operator))) {
+      errors[key("operator")] = "Please select a valid operator for this field.";
+    }
+    if (!departments.includes(rule.department)) errors[key("department")] = "Please select a department.";
+
+    const values = rule.value.split(",").map((value) => value.trim());
+    if (rule.operator === "IN" && values.some((value) => !value)) errors[key("value")] = "Enter one or more values.";
+    else if (['weight_kg', 'value_eur'].includes(rule.field) && values.some((value) => !value || !Number.isFinite(Number(value))))
+      errors[key("value")] = "Comparison value must be a number.";
+    else if (rule.field !== "destination_country" && values.some((value) => !value)) errors[key("value")] = "Comparison value is required.";
+  });
+  return errors;
+}
+
+function FieldError({ message }) {
+  return message ? <span className="field-error" role="alert">{message}</span> : null;
+}
+
+function decisionSummary(decision) {
+  if (!decision) return "Unavailable";
+  return `${decision.department ?? decision.predictedDepartment ?? "—"} · insurance ${decision.insuranceRequired ? "required" : "not required"}`;
+}
+
+function ActivationConfirmModal({ draft, activeConfiguration, changes, dryRun, onCancel, onConfirm, busy }) {
+  const impact = dryRun?.historicalImpact;
+  return (
+    <div className="details-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
+      <section className="details-modal activation-modal" role="dialog" aria-modal="true" aria-labelledby="activate-config-title">
+        <div className="details-modal-header">
+          <div><p className="eyebrow">Confirmation required · Current active v{activeConfiguration.version}</p><h2 id="activate-config-title">Activate Configuration v{draft.version}?</h2></div>
+          <button className="secondary details-close" type="button" onClick={onCancel} disabled={busy}>Close</button>
+        </div>
+        <div className="activation-section">
+          <h3>Changes</h3>
+          <ul>{changes.map((change) => <li key={change}>{change}</li>)}</ul>
+        </div>
+        <div className="activation-section">
+          <h3>Regression</h3>
+          <p className="regression-line success">✓ {dryRun.passedCases}/{dryRun.totalCases} passed</p>
+        </div>
+        <div className="activation-section">
+          <h3>Historical impact</h3>
+          <dl className="impact-summary">
+            <div><dt>Analyzed</dt><dd>{impact?.parcelsAnalyzed ?? 0}</dd></div>
+            <div><dt>Department changes</dt><dd>{impact?.departmentChanges ?? 0}</dd></div>
+            <div><dt>Insurance changes</dt><dd>{impact?.insuranceChanges ?? 0}</dd></div>
+          </dl>
+        </div>
+        <div className="action-row activation-actions">
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="activate" onClick={onConfirm} disabled={busy}>{busy ? "Activating…" : "Activate"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function LoginPage({ onAuthenticated }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -162,13 +260,26 @@ function RouteParcelPage({ credentials, onAuthInvalid }) {
   const [result, setResult] = useState(null);
   const [toast, setToast]   = useState(null);
   const [busy, setBusy]     = useState(false);
+  const [errors, setErrors] = useState({});
+
+  function changeParcel(field, value) {
+    setParcel((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: "" }));
+  }
 
   async function sendParcel(e) {
     e.preventDefault();
     setToast(null); setResult(null);
     const weightKg = Number(parcel.weightKg), valueEur = Number(parcel.valueEur);
-    if (!Number.isFinite(weightKg) || weightKg < 0 || !Number.isFinite(valueEur) || valueEur < 0)
-      return setToast({ type: "error", message: "Weight and declared value must be non-negative numbers." });
+    const nextErrors = {
+      weightKg: nonNegativeNumberError(parcel.weightKg, "Weight"),
+      valueEur: nonNegativeNumberError(parcel.valueEur, "Declared value"),
+      destinationCountry: parcel.destinationCountry ? "" : "Please select a destination country.",
+    };
+    if (Object.values(nextErrors).some(Boolean)) {
+      setErrors(nextErrors);
+      return;
+    }
     setBusy(true);
     try {
       setResult(await submitParcel({ weightKg, valueEur, destinationCountry: parcel.destinationCountry, attributes: {} }, credentials));
@@ -183,23 +294,28 @@ function RouteParcelPage({ credentials, onAuthInvalid }) {
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
       <section className="card">
         <SectionHeading title="Route a parcel" hint="Submit a single parcel for immediate routing." />
-        <form onSubmit={sendParcel}>
+        <form onSubmit={sendParcel} noValidate>
           <div className="form-row">
             <label>Weight (kg)
-              <input type="number" min="0" step="any" required value={parcel.weightKg}
-                onChange={(e) => setParcel({ ...parcel, weightKg: e.target.value })} placeholder="e.g. 5.2" />
+              <input type="number" min="0" step="any" inputMode="decimal" required value={parcel.weightKg}
+                aria-invalid={Boolean(errors.weightKg)} onKeyDown={preventUnsignedNumberKeys}
+                onChange={(e) => changeParcel("weightKg", e.target.value)} placeholder="e.g. 5.2" />
+              <FieldError message={errors.weightKg} />
             </label>
             <label>Declared value (EUR)
-              <input type="number" min="0" step="any" required value={parcel.valueEur}
-                onChange={(e) => setParcel({ ...parcel, valueEur: e.target.value })} placeholder="e.g. 120" />
+              <input type="number" min="0" step="any" inputMode="decimal" required value={parcel.valueEur}
+                aria-invalid={Boolean(errors.valueEur)} onKeyDown={preventUnsignedNumberKeys}
+                onChange={(e) => changeParcel("valueEur", e.target.value)} placeholder="e.g. 120" />
+              <FieldError message={errors.valueEur} />
             </label>
           </div>
           <label>Destination country
-            <select required value={parcel.destinationCountry}
-              onChange={(e) => setParcel({ ...parcel, destinationCountry: e.target.value })}>
+            <select required value={parcel.destinationCountry} aria-invalid={Boolean(errors.destinationCountry)}
+              onChange={(e) => changeParcel("destinationCountry", e.target.value)}>
               <option value="">Select a country</option>
               {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
             </select>
+            <FieldError message={errors.destinationCountry} />
           </label>
           <div><button disabled={busy}>{busy ? "Routing…" : "Route parcel"}</button></div>
         </form>
@@ -236,6 +352,7 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
   const [batchStatus, setBatchStatus] = useState("ALL");
   const [batchDept, setBatchDept]     = useState("ALL");
   const [selectedOutcome, setSelectedOutcome] = useState(null);
+  const [fileError, setFileError] = useState("");
 
   const batchOutcomes = batch?.createdParcels ?? [];
   const batchDepts = useMemo(() =>
@@ -266,8 +383,10 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
   async function sendBatch(e) {
     e.preventDefault();
     setToast(null); setBatch(null); setSelectedOutcome(null); setBatchPage(1); setBatchSearch(""); setBatchStatus("ALL"); setBatchDept("ALL");
-    if (!file || !/\.(json|xml)$/i.test(file.name))
-      return setToast({ type: "error", message: "Choose a .json or .xml batch file." });
+    if (!file || !/\.(json|xml)$/i.test(file.name)) {
+      setFileError("Choose a .json or .xml batch file.");
+      return;
+    }
     setBusy(true);
     try {
       const res = await uploadBatch(file, credentials);
@@ -296,7 +415,13 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
         <form onSubmit={sendBatch}>
           <label>Batch file (.json or .xml)
             <input type="file" accept=".json,.xml,application/json,application/xml,text/xml"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              aria-invalid={Boolean(fileError)} onChange={(e) => {
+                const selectedFile = e.target.files?.[0] ?? null;
+                if (selectedFile && !/\.(json|xml)$/i.test(selectedFile.name)) {
+                  setFile(null); setFileError("Choose a .json or .xml batch file.");
+                } else { setFile(selectedFile); setFileError(""); }
+              }} />
+            <FieldError message={fileError} />
           </label>
           <div><button disabled={busy}>{busy ? "Uploading…" : "Upload batch"}</button></div>
         </form>
@@ -406,21 +531,62 @@ function BatchUploadPage({ credentials, onAuthInvalid }) {
 function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const { form, setForm, draft, setDraft, validation, setValidation, dryRun, setDryRun, toast, setToast, busy, setBusy } = sharedState;
   const ready = validation?.valid && dryRun?.failedCases === 0;
+  const [impactExpanded, setImpactExpanded] = useState(false);
+  const [confirmActivation, setConfirmActivation] = useState(false);
+  const [activeConfiguration, setActiveConfiguration] = useState(null);
+  const [formErrors, setFormErrors] = useState({});
+  const historicalImpact = dryRun?.historicalImpact;
+  const draftConfiguration = useMemo(() => toConfig(form), [form]);
+  const activationChanges = useMemo(() => {
+    if (!activeConfiguration?.configuration) return [];
+    const active = activeConfiguration.configuration;
+    const activeRules = new Map(active.rules.map((rule) => [rule.id, rule]));
+    const changes = [];
+    if (draftConfiguration.insuranceThresholdEur !== active.insuranceThresholdEur)
+      changes.push(`Insurance threshold: €${active.insuranceThresholdEur} → €${draftConfiguration.insuranceThresholdEur}`);
+    draftConfiguration.rules.forEach((rule) => {
+      const previous = activeRules.get(rule.id);
+      if (!previous) changes.push(`New ${rule.department} rule: ${rule.id}`);
+      else if (previous.condition.field === "weight_kg" && rule.condition.field === "weight_kg" && previous.condition.value !== rule.condition.value)
+        changes.push(`${rule.department} threshold: ${previous.condition.value} kg → ${rule.condition.value} kg`);
+      else if (previous.department !== rule.department || previous.priority !== rule.priority
+          || previous.condition.field !== rule.condition.field || previous.condition.operator !== rule.condition.operator
+          || JSON.stringify(previous.condition.value) !== JSON.stringify(rule.condition.value))
+        changes.push(`Rule ${rule.id} updated`);
+      activeRules.delete(rule.id);
+    });
+    activeRules.forEach((rule) => changes.push(`Removed ${rule.department} rule: ${rule.id}`));
+    return changes.length ? changes : ["No threshold or rule changes detected."];
+  }, [activeConfiguration, draftConfiguration]);
 
-  const changeRule      = (i, k, v) => setForm((f) => ({ ...f, rules: f.rules.map((r, idx) => idx === i ? { ...r, [k]: v } : r) }));
-  const changeRuleField = (i, field) => changeRule(i, "field", field === "attribute" ? "attribute:" : field);
+  const changeRule = (i, k, v) => {
+    setForm((f) => ({ ...f, rules: f.rules.map((r, idx) => idx === i ? { ...r, [k]: v } : r) }));
+    setFormErrors({});
+  };
+  const changeRuleField = (i, field) => {
+    setForm((current) => ({ ...current, rules: current.rules.map((rule, index) => {
+      if (index !== i) return rule;
+      const nextField = field === "attribute" ? "attribute:" : field;
+      return { ...rule, field: nextField, operator: ["weight_kg", "value_eur"].includes(nextField) || textOperatorValues.has(rule.operator) ? rule.operator : "EQ", value: "" };
+    }) }));
+    setFormErrors({});
+  };
   const changeAttrName  = (i, name)  => changeRule(i, "field", `attribute:${name}`);
 
   async function create(e) {
     e.preventDefault();
     setToast(null);
+    const errors = validateConfigForm(form);
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      setToast({ type: "error", title: "Check the configuration", message: "Correct the highlighted fields before creating the draft." });
+      return;
+    }
     const payload = toConfig(form);
-    if (!Number.isInteger(payload.insuranceThresholdEur) || payload.insuranceThresholdEur < 0)
-      return setToast({ type: "error", message: "Insurance threshold must be a non-negative whole number." });
     setBusy("create");
     try {
       const next = await createConfigDraft(payload, credentials);
-      setDraft(next); setValidation(null); setDryRun(null);
+      setDraft(next); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setFormErrors({});
       setToast({ type: "info", title: `Draft v${next.version} created`, message: "Validate and run a dry-run before activating." });
     } catch (err) { if (isAuthenticationError(err)) onAuthInvalid(); else setToast({ type: "error", message: errText(err) }); }
     finally { setBusy(""); }
@@ -444,7 +610,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     setBusy("dryrun");
     try {
       const next = await runConfigDryRun(draft.version, credentials);
-      setDryRun(next);
+      setDryRun(next); setImpactExpanded(false);
       setToast(next.failedCases === 0
         ? { type: "success", title: "Dry-run passed", message: "All regression cases passed. You can now activate." }
         : { type: "error",   title: "Dry-run failed",  message: `${next.failedCases} case(s) failed. Activation is blocked.` });
@@ -453,14 +619,24 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   }
 
   async function activate() {
-    if (!window.confirm(`Activate draft version ${draft.version}? This replaces the live configuration.`)) return;
     setBusy("activate");
     try {
       const active = await activateConfigDraft(draft.version, credentials);
       setToast({ type: "success", title: `Version ${active.version} is now ACTIVE`, message: "Live routing is using this configuration." });
-      setDraft(null); setValidation(null); setDryRun(null);
+      setDraft(null); setValidation(null); setDryRun(null); setConfirmActivation(false); setImpactExpanded(false); setActiveConfiguration(null);
     } catch (err) { if (isAuthenticationError(err)) onAuthInvalid(); else setToast({ type: "error", message: errText(err) }); }
     finally { setBusy(""); }
+  }
+
+  async function openActivationConfirmation() {
+    setBusy("load-active");
+    try {
+      setActiveConfiguration(await getActiveConfig(credentials));
+      setConfirmActivation(true);
+    } catch (err) {
+      if (isAuthenticationError(err)) onAuthInvalid();
+      else setToast({ type: "error", message: `Could not load the active configuration: ${errText(err)}` });
+    } finally { setBusy(""); }
   }
 
   return (
@@ -482,12 +658,14 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
           <li className={ready ? "current" : ""}>Activate</li>
         </ol>
 
-        <form onSubmit={create}>
+        <form onSubmit={create} noValidate>
           <fieldset disabled={Boolean(draft) || Boolean(busy)} style={{ border: "none", margin: 0, padding: 0 }}>
             <label>Insurance approval threshold (EUR)
-              <input type="number" min="0" step="1" required value={form.insuranceThresholdEur}
-                onChange={(e) => setForm({ ...form, insuranceThresholdEur: e.target.value })} />
+              <input type="number" min="0" step="1" inputMode="numeric" required value={form.insuranceThresholdEur}
+                aria-invalid={Boolean(formErrors.insuranceThresholdEur)} onKeyDown={preventUnsignedNumberKeys}
+                onChange={(e) => { setForm({ ...form, insuranceThresholdEur: e.target.value }); setFormErrors({}); }} />
               <span className="field-help">Parcels declared above this value require insurance approval before routing.</span>
+              <FieldError message={formErrors.insuranceThresholdEur} />
             </label>
             <div className="rule-list">
               <div className="rule-list-heading">
@@ -495,70 +673,84 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                   <h3>Routing rules</h3>
                   <p className="hint">Rules are evaluated in ascending priority order (lower = higher precedence).</p>
                 </div>
-                <button className="secondary" type="button" onClick={() => setForm({ ...form, rules: [...form.rules, { ...blankRule }] })}>+ Add rule</button>
+                <button className="secondary" type="button" onClick={() => { setForm({ ...form, rules: [...form.rules, { ...blankRule }] }); setFormErrors({}); }}>+ Add rule</button>
               </div>
               {form.rules.map((rule, idx) => {
                 const isAttr   = rule.field.startsWith("attribute:");
                 const selField = isAttr ? "attribute" : rule.field;
+                const isNumericField = ["weight_kg", "value_eur"].includes(rule.field);
+                const availableOperators = isNumericField ? operatorOptions : operatorOptions.filter((option) => textOperatorValues.has(option.value));
                 return (
                   <fieldset className="rule" key={idx}>
                     <legend>Rule {idx + 1}</legend>
                     <div className="rule-fields">
                       <label>Rule ID
-                        <input required value={rule.id} onChange={(e) => changeRule(idx, "id", e.target.value)} placeholder="e.g. heavy-department" />
+                        <input required maxLength="64" pattern="[A-Za-z][A-Za-z0-9_-]*" value={rule.id} aria-invalid={Boolean(formErrors[`rules.${idx}.id`])}
+                          onChange={(e) => changeRule(idx, "id", e.target.value)} placeholder="e.g. heavy-department" />
                         <span className="field-help">Unique, stable identifier.</span>
+                        <FieldError message={formErrors[`rules.${idx}.id`]} />
                       </label>
                       <label>Priority
-                        <input required type="number" min="1" value={rule.priority} onChange={(e) => changeRule(idx, "priority", e.target.value)} placeholder="e.g. 10" />
+                        <input required type="number" min="1" step="1" inputMode="numeric" value={rule.priority} aria-invalid={Boolean(formErrors[`rules.${idx}.priority`])}
+                          onKeyDown={preventUnsignedNumberKeys} onChange={(e) => changeRule(idx, "priority", e.target.value)} placeholder="e.g. 10" />
                         <span className="field-help">Lower = higher precedence.</span>
+                        <FieldError message={formErrors[`rules.${idx}.priority`]} />
                       </label>
                       <label>Department
-                        <select required value={rule.department} onChange={(e) => changeRule(idx, "department", e.target.value)}>
+                        <select required value={rule.department} aria-invalid={Boolean(formErrors[`rules.${idx}.department`])} onChange={(e) => changeRule(idx, "department", e.target.value)}>
                           <option value="" disabled>Select department</option>
                           {departments.map((d) => <option key={d} value={d}>{d}</option>)}
                         </select>
+                        <FieldError message={formErrors[`rules.${idx}.department`]} />
                       </label>
                       <label>Condition field
-                        <select value={selField} onChange={(e) => changeRuleField(idx, e.target.value)}>
+                        <select required value={selField} aria-invalid={Boolean(formErrors[`rules.${idx}.field`])} onChange={(e) => changeRuleField(idx, e.target.value)}>
                           {conditionFields.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
                         </select>
+                        <FieldError message={formErrors[`rules.${idx}.field`]} />
                       </label>
                       {isAttr && (
                         <label>Attribute name
-                          <input required value={rule.field.slice("attribute:".length)} onChange={(e) => changeAttrName(idx, e.target.value)} placeholder="e.g. fragile" />
+                          <input required maxLength="64" pattern="[A-Za-z][A-Za-z0-9_-]*" value={rule.field.slice("attribute:".length)} aria-invalid={Boolean(formErrors[`rules.${idx}.attribute`])}
+                            onChange={(e) => changeAttrName(idx, e.target.value)} placeholder="e.g. fragile" />
                           <span className="field-help">Matches a named parcel attribute.</span>
+                          <FieldError message={formErrors[`rules.${idx}.attribute`]} />
                         </label>
                       )}
                       <label>Operator
-                        <select value={rule.operator} onChange={(e) => changeRule(idx, "operator", e.target.value)}>
-                          {operatorOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        <select required value={rule.operator} aria-invalid={Boolean(formErrors[`rules.${idx}.operator`])} onChange={(e) => changeRule(idx, "operator", e.target.value)}>
+                          {availableOperators.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
+                        <FieldError message={formErrors[`rules.${idx}.operator`]} />
                       </label>
                       <label>Comparison value
                         {rule.field === "destination_country" ? (
                           rule.operator === "IN" ? (
-                            <select required multiple size="5"
+                            <select required multiple size="5" aria-invalid={Boolean(formErrors[`rules.${idx}.value`] )}
                               value={rule.value.split(",").map((value) => value.trim()).filter(Boolean)}
                               onChange={(e) => changeRule(idx, "value", [...e.target.selectedOptions].map((option) => option.value).join(","))}>
                               {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
                             </select>
                           ) : (
-                            <select required value={rule.value.split(",")[0].trim()}
+                            <select required value={rule.value.split(",")[0].trim()} aria-invalid={Boolean(formErrors[`rules.${idx}.value`])}
                               onChange={(e) => changeRule(idx, "value", e.target.value)}>
                               <option value="">Select a country</option>
                               {countries.map(({ code, name }) => <option key={code} value={code}>{name}</option>)}
                             </select>
                           )
                         ) : (
-                          <input required value={rule.value} onChange={(e) => changeRule(idx, "value", e.target.value)}
-                            placeholder={rule.operator === "IN" ? "Comma-separated values" : "Enter a value"} />
+                          <input required type={isNumericField && rule.operator !== "IN" ? "number" : "text"}
+                            step={isNumericField && rule.operator !== "IN" ? "any" : undefined} inputMode={isNumericField ? "decimal" : undefined}
+                            maxLength={!isNumericField ? "120" : rule.operator === "IN" ? "250" : undefined} value={rule.value} aria-invalid={Boolean(formErrors[`rules.${idx}.value`])}
+                            onChange={(e) => changeRule(idx, "value", e.target.value)} placeholder={rule.operator === "IN" ? "Comma-separated values" : "Enter a value"} />
                         )}
                         <span className="field-help">Must be compatible with the selected field.</span>
+                        <FieldError message={formErrors[`rules.${idx}.value`]} />
                       </label>
                     </div>
                     <div className="rule-footer">
                       <button className="danger-link" type="button" disabled={form.rules.length === 1}
-                        onClick={() => setForm({ ...form, rules: form.rules.filter((_, i) => i !== idx) })}>
+                        onClick={() => { setForm({ ...form, rules: form.rules.filter((_, i) => i !== idx) }); setFormErrors({}); }}>
                         Remove rule
                       </button>
                     </div>
@@ -569,15 +761,15 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
           </fieldset>
           {!draft
             ? <div><button disabled={Boolean(busy)}>{busy === "create" ? "Creating draft…" : "Create draft"}</button></div>
-            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); }}>Start new draft</button>
+            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); }}>Start new draft</button>
           }
         </form>
 
         {draft && (
           <div className="action-row">
-            <button onClick={validate} disabled={Boolean(busy)}>{busy === "validate" ? "Validating…" : "Validate"}</button>
-            <button onClick={dryRunDraft} disabled={Boolean(busy) || !validation?.valid}>{busy === "dryrun" ? "Running dry-run…" : "Run dry-run"}</button>
-            {ready && <button className="activate" onClick={activate} disabled={Boolean(busy)}>{busy === "activate" ? "Activating…" : "Activate"}</button>}
+            <button type="button" onClick={validate} disabled={Boolean(busy)}>{busy === "validate" ? "Validating…" : "Validate"}</button>
+            <button type="button" onClick={dryRunDraft} disabled={Boolean(busy) || !validation?.valid}>{busy === "dryrun" ? "Running dry-run…" : "Run dry-run"}</button>
+            {ready && <button type="button" className="activate" onClick={openActivationConfirmation} disabled={Boolean(busy)}>{busy === "load-active" ? "Loading confirmation…" : "Activate"}</button>}
           </div>
         )}
 
@@ -591,13 +783,11 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
 
         {dryRun && (
           <div className={`result ${dryRun.failedCases ? "error" : "success"}`}>
-            <strong>{dryRun.failedCases === 0 ? "✓ Dry-run passed" : "✕ Dry-run failed"}</strong>
-            <p className="hint" style={{ marginTop: 6 }}>This simulation does not affect live routing.</p>
-            <dl className="batch-summary" style={{ marginTop: 14 }}>
-              <div><dt>Total cases</dt><dd>{dryRun.totalCases}</dd></div>
-              <div><dt>Passed</dt><dd>{dryRun.passedCases}</dd></div>
-              <div><dt>Failed</dt><dd>{dryRun.failedCases}</dd></div>
-            </dl>
+            <h3>Regression Tests</h3>
+            <p className={`regression-line ${dryRun.failedCases === 0 ? "success" : "failure"}`}>
+              {dryRun.failedCases === 0 ? "✓" : "✕"} {dryRun.passedCases}/{dryRun.totalCases} passed
+            </p>
+            <p className="hint">This simulation does not affect live routing.</p>
             {dryRun.failures?.length > 0 && (
               <div className="record-errors">
                 <strong>Failure details</strong>
@@ -605,15 +795,34 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                   {dryRun.failures.map((f) => (
                     <li key={f.caseName}>
                       <strong>{f.caseName}</strong>
-                      {f.error ? `: ${f.error}` : <><br />Expected: {JSON.stringify(f.expected)}<br />Actual: {JSON.stringify(f.actual)}</>}
+                      {f.error ? `: ${f.error}` : <div className="dry-run-difference">
+                        <div><span>Expected result</span>{decisionSummary(f.expected)}</div>
+                        <div><span>Actual result</span>{decisionSummary(f.actual)}</div>
+                        <div><span>Matched rule</span>{f.expected?.matchedRuleId ?? "—"} → {f.actual?.matchedRuleId ?? "—"}</div>
+                      </div>}
                     </li>
                   ))}
                 </ul>
               </div>
             )}
+            <div className="historical-impact">
+              <div className="impact-heading"><div><h3>Historical Impact</h3><p className="hint">Read-only preview of the sampled historical parcels.</p></div></div>
+              <dl className="impact-summary">
+                <div><dt>Parcels analyzed</dt><dd>{historicalImpact?.parcelsAnalyzed ?? 0}</dd></div>
+                <div><dt>Department changes</dt><dd>{historicalImpact?.departmentChanges ?? 0}</dd></div>
+                <div><dt>Insurance changes</dt><dd>{historicalImpact?.insuranceChanges ?? 0}</dd></div>
+                <div><dt>Rule changes</dt><dd>{historicalImpact?.matchedRuleChanges ?? 0}</dd></div>
+              </dl>
+              {!historicalImpact || historicalImpact.parcelsAnalyzed === 0 ? <p className="impact-empty">No historical parcels were available for this preview.</p> : <>
+                {historicalImpact.changes?.length > 0 && <button type="button" className="secondary impact-toggle" onClick={() => setImpactExpanded((expanded) => !expanded)}>{impactExpanded ? "Hide changed parcels" : `View changed parcels (${historicalImpact.changes.length})`}</button>}
+                {impactExpanded && historicalImpact.changes?.length > 0 && <div className="batch-table-wrap impact-table-wrap"><table className="batch-outcomes-table impact-table"><thead><tr><th>Parcel ID</th><th>Current Department</th><th>Proposed Department</th><th>Current Rule</th><th>Proposed Rule</th></tr></thead><tbody>{historicalImpact.changes.map((change) => <tr key={change.parcelId}><td data-label="Parcel ID">#{change.parcelId ?? "—"}</td><td data-label="Current Department">{change.currentDepartment ?? "—"}</td><td data-label="Proposed Department">{change.proposedDepartment ?? "—"}</td><td data-label="Current Rule">{change.currentRule ?? "—"}</td><td data-label="Proposed Rule">{change.proposedRule ?? "—"}</td></tr>)}</tbody></table></div>}
+                {historicalImpact.failures?.length > 0 && <div className="record-errors"><strong>Historical records not evaluated ({historicalImpact.failures.length})</strong><ul>{historicalImpact.failures.map((failure) => <li key={`${failure.parcelId}-${failure.error}`}>Parcel #{failure.parcelId ?? "unknown"}: {failure.error}</li>)}</ul></div>}
+              </>}
+            </div>
           </div>
         )}
       </section>
+      {confirmActivation && ready && activeConfiguration && <ActivationConfirmModal draft={draft} activeConfiguration={activeConfiguration} changes={activationChanges} dryRun={dryRun} onCancel={() => setConfirmActivation(false)} onConfirm={activate} busy={busy === "activate"} />}
     </div>
   );
 }

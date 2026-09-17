@@ -63,6 +63,7 @@ public class ParcelService {
                 department,
                 decision.predictedDepartment(),
                 decision.matchedRuleId(),
+                decision.insuranceRequired(),
                 activeConfig.versionId(),
                 Instant.now(),
                 null,

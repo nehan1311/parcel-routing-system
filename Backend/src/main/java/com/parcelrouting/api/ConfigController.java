@@ -1,6 +1,7 @@
 package com.parcelrouting.api;
 
 import com.parcelrouting.config.ConfigService;
+import com.parcelrouting.config.ActiveRoutingConfig;
 import com.parcelrouting.config.ConfigVersionStatus;
 import com.parcelrouting.config.RoutingConfigVersion;
 import com.parcelrouting.routing.RoutingConfig;
@@ -56,6 +57,13 @@ public class ConfigController {
         );
     }
 
+    @GetMapping("/active")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ActiveConfigResponse activeConfiguration() {
+        ActiveRoutingConfig active = configService.getActiveConfigWithVersion();
+        return new ActiveConfigResponse(active.version(), active.routingConfig());
+    }
+
     @GetMapping("/history")
     @PreAuthorize("hasRole('ADMIN')")
     public List<ConfigService.ConfigHistoryEntry> history() {
@@ -74,5 +82,8 @@ public class ConfigController {
     }
 
     public record DraftResponse(int version, ConfigVersionStatus status, RoutingConfig configuration) {
+    }
+
+    public record ActiveConfigResponse(int version, RoutingConfig configuration) {
     }
 }

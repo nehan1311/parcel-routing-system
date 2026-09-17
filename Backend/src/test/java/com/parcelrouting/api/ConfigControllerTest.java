@@ -6,6 +6,11 @@ import com.parcelrouting.config.ConfigVersionNotFoundException;
 import com.parcelrouting.config.ConfigVersionStateException;
 import com.parcelrouting.config.ConfigVersionStatus;
 import com.parcelrouting.config.RoutingConfigVersion;
+import com.parcelrouting.config.ActiveRoutingConfig;
+import com.parcelrouting.routing.RoutingConfig;
+import com.parcelrouting.routing.Rule;
+import com.parcelrouting.routing.Condition;
+import com.parcelrouting.routing.ComparisonOperator;
 import com.parcelrouting.routing.DryRunSimulator;
 import com.parcelrouting.service.ApprovalService;
 import com.parcelrouting.service.ParcelService;
@@ -124,9 +129,30 @@ class ConfigControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalCases").value(3))
                 .andExpect(jsonPath("$.passedCases").value(3))
-                .andExpect(jsonPath("$.failedCases").value(0));
+                .andExpect(jsonPath("$.failedCases").value(0))
+                .andExpect(jsonPath("$.overallStatus").value("PASS"))
+                .andExpect(jsonPath("$.historicalImpact.parcelsAnalyzed").value(0));
 
         verify(configService).dryRun(2);
+    }
+
+    @Test
+    void adminGetsActualActiveConfigurationForDraftComparison() throws Exception {
+        RoutingConfig activeConfiguration = new RoutingConfig(1500, List.of(
+                new Rule("heavy-department", 10,
+                        new Condition("weight_kg", ComparisonOperator.GT, 20), "Heavy")
+        ));
+        when(configService.getActiveConfigWithVersion())
+                .thenReturn(new ActiveRoutingConfig(12L, 4, activeConfiguration));
+
+        mockMvc.perform(get("/api/config/active")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(4))
+                .andExpect(jsonPath("$.configuration.insuranceThresholdEur").value(1500))
+                .andExpect(jsonPath("$.configuration.rules[0].condition.value").value(20));
+
+        verify(configService).getActiveConfigWithVersion();
     }
 
     @Test
@@ -196,6 +222,11 @@ class ConfigControllerTest {
         mockMvc.perform(post("/api/config/drafts/2/dry-run"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/config/drafts/2/activate"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/config/active")
+                        .with(basicAuthentication("operator", OPERATOR_PASSWORD)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/config/active"))
                 .andExpect(status().isUnauthorized());
 
         verifyNoInteractions(configService);
