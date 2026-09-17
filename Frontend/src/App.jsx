@@ -571,6 +571,8 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const ready = validation?.valid && dryRun?.failedCases === 0;
   const [impactExpanded, setImpactExpanded] = useState(false);
   const [ruleChangesExpanded, setRuleChangesExpanded] = useState(false);
+  const [acknowledgedRuleChanges, setAcknowledgedRuleChanges] = useState(new Set());
+  const [activationError, setActivationError] = useState("");
   const [confirmActivation, setConfirmActivation] = useState(false);
   const [activeConfiguration, setActiveConfiguration] = useState(null);
   const [formErrors, setFormErrors] = useState({});
@@ -628,7 +630,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     setBusy("create");
     try {
       const next = await createConfigDraft(payload, credentials);
-      setDraft(next); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setFormErrors({});
+      setDraft(next); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); setFormErrors({});
       setToast({ type: "info", title: `Draft v${next.version} created`, message: "Validate and run a dry-run before activating." });
     } catch (err) { if (isAuthenticationError(err)) onAuthInvalid(); else setToast({ type: "error", message: errText(err) }); }
     finally { setBusy(""); }
@@ -652,7 +654,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     setBusy("dryrun");
     try {
       const next = await runConfigDryRun(draft.version, credentials);
-      setDryRun(next); setImpactExpanded(false);
+      setDryRun(next); setImpactExpanded(false); setAcknowledgedRuleChanges(new Set()); setActivationError("");
       setToast(next.failedCases === 0
         ? { type: "success", title: "Dry-run passed", message: "All regression cases passed. You can now activate." }
         : { type: "error",   title: "Dry-run failed",  message: `${next.failedCases} case(s) failed. Activation is blocked.` });
@@ -662,11 +664,17 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
 
   async function activate() {
     setBusy("activate");
+    setActivationError("");
     try {
-      const active = await activateConfigDraft(draft.version, credentials);
+      const active = await activateConfigDraft(draft.version, credentials, [...acknowledgedRuleChanges]);
       setToast({ type: "success", title: `Version ${active.version} is now ACTIVE`, message: "Live routing is using this configuration." });
       setDraft(null); setValidation(null); setDryRun(null); setConfirmActivation(false); setImpactExpanded(false); setActiveConfiguration(null);
-    } catch (err) { if (isAuthenticationError(err)) onAuthInvalid(); else setToast({ type: "error", message: errText(err) }); }
+    } catch (err) {
+      if (isAuthenticationError(err)) onAuthInvalid();
+      else if (err?.status === 409 && err.message?.includes("unacknowledged field/operator changes")) {
+        setActivationError(`Activation blocked: ${errText(err)}`);
+      } else setToast({ type: "error", message: errText(err) });
+    }
     finally { setBusy(""); }
   }
 
@@ -803,7 +811,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
           </fieldset>
           {!draft
             ? <div><button disabled={Boolean(busy)}>{busy === "create" ? "Creating draft…" : "Create draft"}</button></div>
-            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); }}>Start new draft</button>
+            : <button type="button" className="secondary" onClick={() => { setDraft(null); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); }}>Start new draft</button>
           }
         </form>
 
@@ -881,16 +889,34 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                 </button>
                 {ruleChangesExpanded && <div className="batch-table-wrap semantic-diff-table-wrap">
                   <table className="batch-outcomes-table semantic-diff-table">
-                    <thead><tr><th>Rule ID</th><th>Change type</th></tr></thead>
+                    <thead><tr><th>Rule ID</th><th>Change type</th><th>Acknowledgment</th></tr></thead>
                     <tbody>{changedRuleDiffs.map((diff) => (
                       <tr key={diff.ruleId} className={diff.crossesNumericTextBoundary ? "semantic-diff-boundary" : undefined}>
                         <td data-label="Rule ID">{diff.ruleId ?? "—"}</td>
                         <td data-label="Change type">{semanticChangeLabel(diff.changeType)}{diff.crossesNumericTextBoundary && " · Numeric/text boundary"}</td>
+                        <td data-label="Acknowledgment">
+                          {diff.changeType === "FIELD_CHANGE" || diff.changeType === "OPERATOR_CHANGE"
+                            ? <label className="rule-change-acknowledgment">
+                                <input
+                                  type="checkbox"
+                                  checked={acknowledgedRuleChanges.has(diff.ruleId)}
+                                  onChange={(event) => setAcknowledgedRuleChanges((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(diff.ruleId);
+                                    else next.delete(diff.ruleId);
+                                    return next;
+                                  })}
+                                />
+                                Acknowledge
+                              </label>
+                            : "—"}
+                        </td>
                       </tr>
                     ))}</tbody>
                   </table>
                 </div>}
               </>}
+              {activationError && <p className="dry-run-guidance activation-acknowledgment-error">{activationError}</p>}
             </div>
             <div className="boundary-impact">
               <div className="impact-heading">

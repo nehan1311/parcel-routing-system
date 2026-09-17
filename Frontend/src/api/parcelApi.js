@@ -93,8 +93,16 @@ export function runConfigDryRun(version, credentials) {
   return request(`/api/config/drafts/${version}/dry-run`, { method: "POST" }, credentials);
 }
 
-export function activateConfigDraft(version, credentials) {
-  return request(`/api/config/drafts/${version}/activate`, { method: "POST" }, credentials);
+export function activateConfigDraft(version, credentials, acknowledgedRuleChanges = []) {
+  return request(
+    `/api/config/drafts/${version}/activate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ acknowledgedRuleChanges }),
+    },
+    credentials,
+  );
 }
 
 export function getActiveConfig(credentials) {

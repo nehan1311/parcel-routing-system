@@ -220,8 +220,11 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 .dry-run-difference span { color: var(--slate-500); display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .05em; margin-right: 8px; text-transform: uppercase; }
 .rule-changes { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
 .semantic-diff-table-wrap { margin-top: 14px; }
-.semantic-diff-table { min-width: 420px; }
+.semantic-diff-table { min-width: 560px; }
 .semantic-diff-boundary { background: var(--red-50); box-shadow: inset 3px 0 0 var(--red-600); }
+.rule-change-acknowledgment { align-items: center; display: inline-flex; flex-direction: row; font-size: .8rem; gap: 7px; white-space: nowrap; }
+.rule-change-acknowledgment input { accent-color: var(--brand-600); height: 16px; margin: 0; width: 16px; }
+.activation-acknowledgment-error { margin-top: 14px; }
 .boundary-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
 .boundary-impact-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .boundary-impact-table-wrap { margin-top: 14px; }
