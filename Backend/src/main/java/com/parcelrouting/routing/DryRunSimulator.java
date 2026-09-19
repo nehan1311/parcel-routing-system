@@ -57,11 +57,7 @@ public class DryRunSimulator {
 
         for (ParcelEntity entity : historicalParcels) {
             try {
-                Map<String, Object> attributes = objectMapper.readValue(
-                        entity.getAttributesJson() == null ? "{}" : entity.getAttributesJson(),
-                        new com.fasterxml.jackson.core.type.TypeReference<>() { }
-                );
-                Parcel parcel = new Parcel(entity.getWeightKg(), entity.getValueEur(), entity.getDestinationCountry(), attributes);
+                Parcel parcel = toParcel(entity);
                 RoutingDecision proposed = routingEngine.evaluate(parcel, draftConfiguration);
 
                 if (entity.getInsuranceRequired() == null) {
@@ -92,6 +88,14 @@ public class DryRunSimulator {
         }
         return new HistoricalImpact(historicalParcels.size(), departmentChanges, insuranceChanges,
                 matchedRuleChanges, List.copyOf(changes), List.copyOf(failures));
+    }
+
+    public Parcel toParcel(ParcelEntity entity) throws IOException {
+        Map<String, Object> attributes = objectMapper.readValue(
+                entity.getAttributesJson() == null ? "{}" : entity.getAttributesJson(),
+                new com.fasterxml.jackson.core.type.TypeReference<>() { }
+        );
+        return new Parcel(entity.getWeightKg(), entity.getValueEur(), entity.getDestinationCountry(), attributes);
     }
 
     private RegressionFixtures loadFixtures() {

@@ -1,6 +1,7 @@
 package com.parcelrouting.routing;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.parcelrouting.parcel.Parcel;
 import com.parcelrouting.parcel.ParcelEntity;
 import com.parcelrouting.parcel.ParcelStatus;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HistoricalImpactTest {
 
     private final DryRunSimulator simulator = new DryRunSimulator(new RoutingEngine(), new ObjectMapper());
+
+    @Test
+    void convertsHistoricalParcelWithAttributes() throws Exception {
+        Parcel parcel = simulator.toParcel(parcel("Mail", "mail", false, "{\"service\":\"priority\"}"));
+
+        assertEquals(1, parcel.weightKg());
+        assertEquals(100, parcel.valueEur());
+        assertEquals("DE", parcel.destinationCountry());
+        assertEquals("priority", parcel.attributes().get("service"));
+    }
+
+    @Test
+    void convertsHistoricalParcelWithNullAttributesJsonUsingEmptyObjectFallback() throws Exception {
+        ParcelEntity entity = new ParcelEntity(
+                2, 200, "DE", null, ParcelStatus.ROUTED, "Mail", "Mail", "mail",
+                false, 1L, Instant.now(), null, null
+        );
+
+        Parcel parcel = simulator.toParcel(entity);
+
+        assertEquals(2, parcel.weightKg());
+        assertEquals(200, parcel.valueEur());
+        assertEquals("DE", parcel.destinationCountry());
+        assertTrue(parcel.attributes().isEmpty());
+    }
 
     @Test
     void historicalParcelWithNoChangeIsReportedWithoutImpact() {
