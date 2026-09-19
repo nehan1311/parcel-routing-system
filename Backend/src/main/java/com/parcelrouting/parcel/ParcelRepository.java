@@ -13,5 +13,7 @@ public interface ParcelRepository extends JpaRepository<ParcelEntity, Long> {
 
     List<ParcelEntity> findByStatusInAndCreatedAtAfter(List<ParcelStatus> statuses, Instant createdAt);
 
+    List<ParcelEntity> findByRoutingConfigVersionIdAndCreatedAtGreaterThanEqual(Long routingConfigVersionId, Instant createdAt);
+
     Page<ParcelEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
 }

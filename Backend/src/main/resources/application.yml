@@ -45,3 +45,9 @@ parcel:
 parcelrouting:
   materiality:
     threshold-percent: ${PARCELROUTING_MATERIALITY_THRESHOLD_PERCENT:5.0}
+  monitoring:
+    config-drift:
+      interval-ms: ${PARCELROUTING_CONFIG_DRIFT_INTERVAL_MS:300000}
+      window-days: ${PARCELROUTING_CONFIG_DRIFT_WINDOW_DAYS:7}
+      minimum-sample-count: ${PARCELROUTING_CONFIG_DRIFT_MINIMUM_SAMPLE_COUNT:5}
+      drift-multiplier: ${PARCELROUTING_CONFIG_DRIFT_MULTIPLIER:2.0}
