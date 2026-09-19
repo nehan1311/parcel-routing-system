@@ -234,6 +234,7 @@ class ConfigServiceTest {
         assertEquals(result.passedCases(), dryRunResult.passedCases());
         assertEquals(result.failedCases(), dryRunResult.failedCases());
         assertEquals(result.failures(), dryRunResult.failures());
+        assertEquals(5.0, dryRunResult.materialityThresholdPercent());
         verify(repository).save(draft);
         verify(dryRunSimulator).simulate(any(RoutingConfig.class));
     }

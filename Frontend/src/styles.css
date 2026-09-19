@@ -233,6 +233,10 @@ form { display: grid; gap: 14px; margin-top: 20px; }
 .boundary-impact-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .boundary-impact-table-wrap { margin-top: 14px; }
 .boundary-impact-table { min-width: 420px; }
+.boundary-materiality-approval { background: var(--amber-50); border-left: 3px solid var(--amber-600); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--slate-700); font-size: .82rem; margin-top: 14px; padding: 10px 12px; }
+.boundary-materiality-approval p { margin: 5px 0 10px; }
+.boundary-materiality-approved { color: var(--green-700); font-weight: 700; }
+.boundary-materiality-error { border-left-color: var(--amber-600); margin-top: 10px; }
 .historical-impact { border-top: 1px solid var(--slate-200); margin-top: 20px; padding-top: 20px; }
 .impact-heading h3, .activation-section h3 { font-size: .96rem; margin: 0; }
 .impact-summary { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0 0; }

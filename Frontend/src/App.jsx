@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   activateConfigDraft, createConfigDraft, getActiveConfig, getConfigHistory, rollbackConfig, runConfigDryRun,
-  approveParcel, authenticate, getPendingApprovals, isAuthenticationError,
+  approveMaterialChange, approveParcel, authenticate, getPendingApprovals, isAuthenticationError,
   submitParcel, uploadBatch, validateConfigDraft,
 } from "./api/parcelApi";
 import { countries, countryName } from "./countries";
@@ -34,7 +34,6 @@ const operatorOptions = [
 const departments = ["Mail", "Regular", "Heavy"];
 const identifierPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const textOperatorValues = new Set(["EQ", "NEQ", "IN"]);
-
 const errText  = (e) => e instanceof Error ? e.message : "The request could not be completed.";
 const csvCell  = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
 const dateText = (v) => v
@@ -573,6 +572,10 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const [ruleChangesExpanded, setRuleChangesExpanded] = useState(false);
   const [acknowledgedRuleChanges, setAcknowledgedRuleChanges] = useState(new Set());
   const [activationError, setActivationError] = useState("");
+  const [materialityActivationError, setMaterialityActivationError] = useState("");
+  const [materialityApprovalError, setMaterialityApprovalError] = useState("");
+  const [materialChangeApproved, setMaterialChangeApproved] = useState(false);
+  const [materialityApprovalBusy, setMaterialityApprovalBusy] = useState(false);
   const [confirmActivation, setConfirmActivation] = useState(false);
   const [activeConfiguration, setActiveConfiguration] = useState(null);
   const [formErrors, setFormErrors] = useState({});
@@ -581,6 +584,15 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const changedRuleDiffs = (dryRun?.semanticDiff ?? []).filter((diff) => diff?.changeType !== "NO_CHANGE");
   const boundarySimulation = dryRun?.boundarySimulation;
   const boundaryChanges = boundarySimulation?.changedRanges ?? [];
+  const materialityThresholdPercent = Number.isFinite(dryRun?.materialityThresholdPercent)
+    ? dryRun.materialityThresholdPercent
+    : null;
+  const boundaryMaterialityPercent = boundarySimulation?.totalSimulated > 0
+    ? Math.max(boundarySimulation.changedDepartments ?? 0, boundarySimulation.changedInsuranceStatuses ?? 0)
+        * 100 / boundarySimulation.totalSimulated
+    : 0;
+  const materialityRequiresApproval = materialityThresholdPercent !== null
+    && boundaryMaterialityPercent > materialityThresholdPercent;
   const draftConfiguration = useMemo(() => toConfig(form), [form]);
   const activationChanges = useMemo(() => {
     if (!activeConfiguration?.configuration) return [];
@@ -634,7 +646,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     setBusy("create");
     try {
       const next = await createConfigDraft(payload, credentials);
-      setDraft(next); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); setFormErrors({});
+      setDraft(next); setValidation(null); setDryRun(null); setImpactExpanded(false); setConfirmActivation(false); setActiveConfiguration(null); setAcknowledgedRuleChanges(new Set()); setActivationError(""); setMaterialityActivationError(""); setMaterialityApprovalError(""); setMaterialChangeApproved(false); setFormErrors({});
       setToast({ type: "info", title: `Draft v${next.version} created`, message: "Validate and run a dry-run before activating." });
     } catch (err) { if (isAuthenticationError(err)) onAuthInvalid(); else setToast({ type: "error", message: errText(err) }); }
     finally { setBusy(""); }
@@ -658,7 +670,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     setBusy("dryrun");
     try {
       const next = await runConfigDryRun(draft.version, credentials);
-      setDryRun(next); setImpactExpanded(false); setAcknowledgedRuleChanges(new Set()); setActivationError("");
+      setDryRun(next); setImpactExpanded(false); setAcknowledgedRuleChanges(new Set()); setActivationError(""); setMaterialityActivationError(""); setMaterialityApprovalError(""); setMaterialChangeApproved(false);
       setToast(next.failedCases === 0
         ? { type: "success", title: "Dry-run passed", message: "All regression cases passed. You can now activate." }
         : { type: "error",   title: "Dry-run failed",  message: `${next.failedCases} case(s) failed. Activation is blocked.` });
@@ -666,17 +678,31 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
     finally { setBusy(""); }
   }
 
+  async function approveMaterialChangeForDraft() {
+    setMaterialityApprovalBusy(true);
+    setMaterialityApprovalError("");
+    try {
+      await approveMaterialChange(draft.version, credentials);
+      setMaterialChangeApproved(true);
+    } catch (err) {
+      if (isAuthenticationError(err)) onAuthInvalid();
+      else setMaterialityApprovalError(`Second-admin approval blocked: ${errText(err)}`);
+    } finally { setMaterialityApprovalBusy(false); }
+  }
+
   async function activate() {
     setBusy("activate");
-    setActivationError("");
+    setActivationError(""); setMaterialityActivationError("");
     try {
       const active = await activateConfigDraft(draft.version, credentials, [...acknowledgedRuleChanges]);
       setToast({ type: "success", title: `Version ${active.version} is now ACTIVE`, message: "Live routing is using this configuration." });
-      setDraft(null); setValidation(null); setDryRun(null); setConfirmActivation(false); setImpactExpanded(false); setActiveConfiguration(null);
+      setDraft(null); setValidation(null); setDryRun(null); setConfirmActivation(false); setImpactExpanded(false); setActiveConfiguration(null); setMaterialChangeApproved(false);
     } catch (err) {
       if (isAuthenticationError(err)) onAuthInvalid();
       else if (err?.status === 409 && err.message?.includes("unacknowledged field/operator changes")) {
         setActivationError(`Activation blocked: ${errText(err)}`);
+      } else if (err?.status === 409 && err.message?.includes("materiality is")) {
+        setMaterialityActivationError(`Second-admin approval required: ${errText(err)}`);
       } else setToast({ type: "error", message: errText(err) });
     }
     finally { setBusy(""); }
@@ -939,6 +965,27 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
                 <div><dt>Department changes</dt><dd>{boundarySimulation?.changedDepartments ?? 0}</dd></div>
                 <div><dt>Insurance changes</dt><dd>{boundarySimulation?.changedInsuranceStatuses ?? 0}</dd></div>
               </dl>
+              {materialityRequiresApproval && (
+                <div className="boundary-materiality-approval">
+                  <strong>Requires second-admin approval</strong>
+                  <p>
+                    {boundaryMaterialityPercent.toFixed(2)}% of simulated parcels are affected, above the {materialityThresholdPercent}% threshold.
+                    A different admin than the draft creator must approve this material change.
+                  </p>
+                  {materialChangeApproved
+                    ? <p className="boundary-materiality-approved">Second-admin approval recorded for this draft.</p>
+                    : <button
+                        type="button"
+                        className="secondary"
+                        onClick={approveMaterialChangeForDraft}
+                        disabled={materialityApprovalBusy || busy === "activate"}
+                      >
+                        {materialityApprovalBusy ? "Requesting approval…" : "Approve as second admin"}
+                      </button>}
+                  {materialityApprovalError && <p className="dry-run-guidance boundary-materiality-error">{materialityApprovalError}</p>}
+                  {materialityActivationError && <p className="dry-run-guidance boundary-materiality-error">{materialityActivationError}</p>}
+                </div>
+              )}
               {!boundarySimulation || boundarySimulation.totalSimulated === 0 || boundaryChanges.length === 0
                 ? <p className="impact-empty">No boundary changes detected in the simulated range.</p>
                 : <>

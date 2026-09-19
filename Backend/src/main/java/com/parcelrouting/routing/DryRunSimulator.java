@@ -113,10 +113,11 @@ public class DryRunSimulator {
             int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures,
             HistoricalImpact historicalImpact,
             List<ConfigSemanticDiffer.RuleDiff> semanticDiff,
-            BoundarySimulator.BoundarySimulationResult boundarySimulation
+            BoundarySimulator.BoundarySimulationResult boundarySimulation,
+            double materialityThresholdPercent
     ) {
         public DryRunResult(int totalCases, int passedCases, int failedCases, List<DryRunFailure> failures) {
-            this(totalCases, passedCases, failedCases, failures, HistoricalImpact.empty(), List.of(), BoundarySimulator.empty());
+            this(totalCases, passedCases, failedCases, failures, HistoricalImpact.empty(), List.of(), BoundarySimulator.empty(), 5.0);
         }
 
         public DryRunResult(
@@ -126,7 +127,7 @@ public class DryRunSimulator {
                 List<DryRunFailure> failures,
                 HistoricalImpact historicalImpact
         ) {
-            this(totalCases, passedCases, failedCases, failures, historicalImpact, List.of(), BoundarySimulator.empty());
+            this(totalCases, passedCases, failedCases, failures, historicalImpact, List.of(), BoundarySimulator.empty(), 5.0);
         }
 
         public DryRunResult(
@@ -137,7 +138,19 @@ public class DryRunSimulator {
                 HistoricalImpact historicalImpact,
                 List<ConfigSemanticDiffer.RuleDiff> semanticDiff
         ) {
-            this(totalCases, passedCases, failedCases, failures, historicalImpact, semanticDiff, BoundarySimulator.empty());
+            this(totalCases, passedCases, failedCases, failures, historicalImpact, semanticDiff, BoundarySimulator.empty(), 5.0);
+        }
+
+        public DryRunResult(
+                int totalCases,
+                int passedCases,
+                int failedCases,
+                List<DryRunFailure> failures,
+                HistoricalImpact historicalImpact,
+                List<ConfigSemanticDiffer.RuleDiff> semanticDiff,
+                BoundarySimulator.BoundarySimulationResult boundarySimulation
+        ) {
+            this(totalCases, passedCases, failedCases, failures, historicalImpact, semanticDiff, boundarySimulation, 5.0);
         }
 
         @JsonProperty("overallStatus")

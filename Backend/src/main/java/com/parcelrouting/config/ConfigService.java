@@ -165,7 +165,8 @@ public class ConfigService {
         }
         DryRunSimulator.DryRunResult result = new DryRunSimulator.DryRunResult(
                 regressionResult.totalCases(), regressionResult.passedCases(), regressionResult.failedCases(),
-                regressionResult.failures(), historicalImpact, semanticDiff, boundarySimulation
+                regressionResult.failures(), historicalImpact, semanticDiff, boundarySimulation,
+                materialityThresholdPercent
         );
         draft.recordDryRun(Instant.now(), result.failedCases() == 0);
         routingConfigVersionRepository.save(draft);

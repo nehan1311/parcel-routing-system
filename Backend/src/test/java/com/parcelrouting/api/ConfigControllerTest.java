@@ -162,7 +162,8 @@ class ConfigControllerTest {
                 .andExpect(jsonPath("$.passedCases").value(3))
                 .andExpect(jsonPath("$.failedCases").value(0))
                 .andExpect(jsonPath("$.overallStatus").value("PASS"))
-                .andExpect(jsonPath("$.historicalImpact.parcelsAnalyzed").value(0));
+                .andExpect(jsonPath("$.historicalImpact.parcelsAnalyzed").value(0))
+                .andExpect(jsonPath("$.materialityThresholdPercent").value(5.0));
 
         verify(configService).dryRun(2);
     }

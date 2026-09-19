@@ -105,6 +105,14 @@ export function activateConfigDraft(version, credentials, acknowledgedRuleChange
   );
 }
 
+export function approveMaterialChange(version, credentials) {
+  return request(
+    `/api/config/drafts/${version}/approve-material-change`,
+    { method: "POST" },
+    credentials,
+  );
+}
+
 export function getActiveConfig(credentials) {
   return request("/api/config/active", { method: "GET" }, credentials);
 }
