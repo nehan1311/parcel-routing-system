@@ -221,6 +221,22 @@ class ConfigControllerTest {
     }
 
     @Test
+    void adminApprovesMaterialChangeWithAuthenticatedUsername() throws Exception {
+        RoutingConfigVersion approved = new RoutingConfigVersion(
+                2, ConfigVersionStatus.DRAFT, "{}", "creator", Instant.now(), null, 1L
+        );
+        when(configService.approveMaterialChange(2L, "admin")).thenReturn(approved);
+
+        mockMvc.perform(post("/api/config/drafts/2/approve-material-change")
+                        .with(basicAuthentication("admin", ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+
+        verify(configService).approveMaterialChange(2L, "admin");
+    }
+
+    @Test
     void unacknowledgedRuleChangeUsesExistingActivationConflictResponse() throws Exception {
         when(configService.activate(2L, "admin", List.of()))
                 .thenThrow(new com.parcelrouting.config.UnacknowledgedRuleChangeException(

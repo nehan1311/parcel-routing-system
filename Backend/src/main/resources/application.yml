@@ -41,3 +41,7 @@ parcel:
     operator-password: ${PARCEL_OPERATOR_PASSWORD:operator-local-only}
     approver-password: ${PARCEL_APPROVER_PASSWORD:approver-local-only}
     admin-password: ${PARCEL_ADMIN_PASSWORD:admin-local-only}
+
+parcelrouting:
+  materiality:
+    threshold-percent: ${PARCELROUTING_MATERIALITY_THRESHOLD_PERCENT:5.0}

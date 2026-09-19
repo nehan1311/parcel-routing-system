@@ -67,6 +67,22 @@ public class ConfigController {
         );
     }
 
+    @PostMapping("/drafts/{version}/approve-material-change")
+    @PreAuthorize("hasRole('ADMIN')")
+    public DraftResponse approveMaterialChange(
+            @PathVariable Long version,
+            Authentication authentication
+    ) {
+        RoutingConfigVersion approvedVersion =
+                configService.approveMaterialChange(version, authentication.getName());
+        return new DraftResponse(
+                approvedVersion.getVersion(),
+                approvedVersion.getStatus(),
+                null,
+                approvedVersion.getReason()
+        );
+    }
+
     @GetMapping("/active")
     @PreAuthorize("hasRole('ADMIN')")
     public ActiveConfigResponse activeConfiguration() {

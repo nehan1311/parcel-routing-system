@@ -12,6 +12,7 @@ import com.parcelrouting.routing.ConfigSemanticDiffer;
 import com.parcelrouting.routing.BoundarySimulator;
 import com.parcelrouting.routing.RuleSetAnalyzer;
 import com.parcelrouting.parcel.ParcelRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Page;
@@ -35,6 +36,7 @@ public class ConfigService {
     private final DryRunSimulator dryRunSimulator;
     private final ParcelRepository parcelRepository;
     private final int historicalImpactLimit;
+    private final double materialityThresholdPercent;
     private final ConfigSemanticDiffer semanticDiffer = new ConfigSemanticDiffer();
     private final RuleSetAnalyzer ruleSetAnalyzer = new RuleSetAnalyzer();
     private final BoundarySimulator boundarySimulator = new BoundarySimulator(
@@ -50,6 +52,20 @@ public class ConfigService {
             ParcelRepository parcelRepository,
             @Value("${parcel.config.historical-impact-limit:100}") int historicalImpactLimit
     ) {
+        this(routingConfigVersionRepository, objectMapper, configValidator, dryRunSimulator,
+                parcelRepository, historicalImpactLimit, 5.0);
+    }
+
+    @Autowired
+    public ConfigService(
+            RoutingConfigVersionRepository routingConfigVersionRepository,
+            ObjectMapper objectMapper,
+            ConfigValidator configValidator,
+            DryRunSimulator dryRunSimulator,
+            ParcelRepository parcelRepository,
+            @Value("${parcel.config.historical-impact-limit:100}") int historicalImpactLimit,
+            @Value("${parcelrouting.materiality.threshold-percent:5.0}") double materialityThresholdPercent
+    ) {
         this.routingConfigVersionRepository = routingConfigVersionRepository;
         this.objectMapper = objectMapper;
         this.configValidator = configValidator;
@@ -58,7 +74,13 @@ public class ConfigService {
         if (historicalImpactLimit < 1) {
             throw new IllegalArgumentException("Historical impact limit must be at least 1");
         }
+        if (!Double.isFinite(materialityThresholdPercent)
+                || materialityThresholdPercent < 0
+                || materialityThresholdPercent > 100) {
+            throw new IllegalArgumentException("Materiality threshold percent must be between 0 and 100");
+        }
         this.historicalImpactLimit = historicalImpactLimit;
+        this.materialityThresholdPercent = materialityThresholdPercent;
     }
 
     @Transactional
@@ -169,6 +191,30 @@ public class ConfigService {
         return activateDraftWithAcknowledgment(draft, activatedBy, acknowledgedRuleChanges);
     }
 
+    @Transactional
+    public RoutingConfigVersion approveMaterialChange(Long version, String approver) {
+        if (version == null || version > Integer.MAX_VALUE || version < Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("Routing configuration version must be a valid integer");
+        }
+        if (approver == null || approver.isBlank()) {
+            throw new IllegalArgumentException("Material-change approver must not be blank");
+        }
+
+        RoutingConfigVersion draft = routingConfigVersionRepository.findByVersion(version.intValue())
+                .orElseThrow(() -> new ConfigVersionNotFoundException(version.intValue()));
+        if (draft.getStatus() != ConfigVersionStatus.DRAFT) {
+            throw new ConfigVersionStateException(version.intValue());
+        }
+        if (approver.equals(draft.getCreatedBy())) {
+            throw new MaterialChangeApprovalException(
+                    version.intValue(), "material-change approval must be provided by a different admin"
+            );
+        }
+
+        draft.approveMaterialChange(approver, Instant.now());
+        return routingConfigVersionRepository.save(draft);
+    }
+
     @Transactional(readOnly = true)
     public List<ConfigHistoryEntry> history() {
         return routingConfigVersionRepository.findAllByOrderByVersionDesc().stream()
@@ -248,7 +294,44 @@ public class ConfigService {
             throw new UnacknowledgedRuleChangeException(draft.getVersion(), requiredAcknowledgements);
         }
 
+        requireMaterialChangeApprovalIfNeeded(draft);
+
         return activateDraftAfterChecks(draft, activatedBy);
+    }
+
+    private void requireMaterialChangeApprovalIfNeeded(RoutingConfigVersion draft) {
+        RoutingConfig activeConfiguration;
+        try {
+            activeConfiguration = getActiveConfigWithVersion().routingConfig();
+        } catch (IllegalStateException exception) {
+            if ("No active routing configuration exists".equals(exception.getMessage())) {
+                return;
+            }
+            throw exception;
+        }
+
+        RoutingConfig draftConfiguration = parseRoutingConfig(draft.getRulesJson());
+        BoundarySimulator.BoundarySimulationResult simulation =
+                boundarySimulator.simulate(activeConfiguration, draftConfiguration);
+        if (simulation.totalSimulated() == 0) {
+            return;
+        }
+
+        double departmentPercent = simulation.changedDepartments() * 100.0 / simulation.totalSimulated();
+        double insurancePercent = simulation.changedInsuranceStatuses() * 100.0 / simulation.totalSimulated();
+        double materialityPercent = Math.max(departmentPercent, insurancePercent);
+        boolean approved = draft.getMaterialChangeApprovedBy() != null
+                && !draft.getMaterialChangeApprovedBy().equals(draft.getCreatedBy())
+                && draft.getMaterialChangeApprovedRulesJson() != null
+                && draft.getMaterialChangeApprovedRulesJson().equals(draft.getRulesJson());
+        if (materialityPercent > materialityThresholdPercent && !approved) {
+            throw new MaterialChangeApprovalException(
+                    draft.getVersion(),
+                    String.format(java.util.Locale.ROOT,
+                            "materiality is %.2f%%, above the %.2f%% threshold; approval by a different admin is required",
+                            materialityPercent, materialityThresholdPercent)
+            );
+        }
     }
 
     private RoutingConfigVersion activateDraft(RoutingConfigVersion draft, String activatedBy) {

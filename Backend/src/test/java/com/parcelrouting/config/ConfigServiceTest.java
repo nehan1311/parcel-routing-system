@@ -282,6 +282,7 @@ class ConfigServiceTest {
         when(repository.save(draft)).thenReturn(draft);
 
         configService.dryRun(2);
+        configService.approveMaterialChange(2L, "reviewer");
         RoutingConfigVersion activated = configService.activate(2L, "admin");
 
         assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
@@ -326,6 +327,7 @@ class ConfigServiceTest {
         when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
         when(repository.save(draft)).thenReturn(draft);
 
+        configService.approveMaterialChange(2L, "reviewer");
         RoutingConfigVersion activated = configService.activate(
                 2L, "admin", List.of("heavy-department")
         );
@@ -379,10 +381,81 @@ class ConfigServiceTest {
         when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
         when(repository.save(draft)).thenReturn(draft);
 
+        configService.approveMaterialChange(2L, "reviewer");
         RoutingConfigVersion activated = configService.activate(2L, "admin");
 
         assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
         assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
+    }
+
+    @Test
+    void lowMaterialityChangeActivatesWithoutApproval() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, validConfigJson().replace(
+                "\"requiredAboveValueEur\": 1000", "\"requiredAboveValueEur\": 1010"));
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+        when(repository.save(draft)).thenReturn(draft);
+
+        RoutingConfigVersion activated = configService.activate(2L, "admin");
+
+        assertEquals(ConfigVersionStatus.ACTIVE, activated.getStatus());
+        assertEquals(ConfigVersionStatus.ARCHIVED, active.getStatus());
+    }
+
+    @Test
+    void highMaterialityChangeWithoutApprovalIsBlockedWithPercentage() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, alternateConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+
+        MaterialChangeApprovalException exception = assertThrows(
+                MaterialChangeApprovalException.class,
+                () -> configService.activate(2L, "admin")
+        );
+
+        assertTrue(exception.getMessage().contains("materiality is"));
+        assertTrue(exception.getMessage().contains("threshold"));
+    }
+
+    @Test
+    void materialChangeApprovalByCreatorIsRejected() {
+        RoutingConfigVersion draft = draftVersion(2, alternateConfigJson());
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+
+        MaterialChangeApprovalException exception = assertThrows(
+                MaterialChangeApprovalException.class,
+                () -> configService.approveMaterialChange(2L, "admin")
+        );
+
+        assertTrue(exception.getMessage().contains("different admin"));
+    }
+
+    @Test
+    void staleMaterialChangeApprovalDoesNotSatisfyGate() {
+        RoutingConfigVersion active = activeVersion(validConfigJson());
+        setId(active, 1L);
+        RoutingConfigVersion draft = draftVersion(2, validConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+        when(repository.findByVersion(2)).thenReturn(java.util.Optional.of(draft));
+        when(repository.findByStatus(ConfigVersionStatus.ACTIVE)).thenReturn(List.of(active));
+        when(repository.save(draft)).thenReturn(draft);
+
+        configService.approveMaterialChange(2L, "reviewer");
+        setRulesJson(draft, alternateConfigJson());
+        draft.recordDryRun(Instant.now(), true);
+
+        MaterialChangeApprovalException exception = assertThrows(
+                MaterialChangeApprovalException.class,
+                () -> configService.activate(2L, "admin")
+        );
+
+        assertTrue(exception.getMessage().contains("materiality is"));
     }
 
     @Test
@@ -571,12 +644,23 @@ class ConfigServiceTest {
         }
     }
 
+    private void setRulesJson(RoutingConfigVersion version, String rulesJson) {
+        try {
+            java.lang.reflect.Field field = RoutingConfigVersion.class.getDeclaredField("rulesJson");
+            field.setAccessible(true);
+            field.set(version, rulesJson);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
     private String alternateConfigJson() {
         return validConfigJson().replace("\"requiredAboveValueEur\": 1000", "\"requiredAboveValueEur\": 1500");
     }
 
     private String fieldChangedConfigJson() {
         return validConfigJson().replaceFirst("\"field\": \"weight_kg\"", "\"field\": \"destination_country\"")
+                .replaceFirst("\"operator\": \"GT\"", "\"operator\": \"EQ\"")
                 .replaceFirst("\"value\": 10", "\"value\": \"DE\"");
     }
 

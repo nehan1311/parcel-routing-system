@@ -57,6 +57,15 @@ public class RoutingConfigVersion {
     @Column(name = "reason", length = 500)
     private String reason;
 
+    @Column(name = "material_change_approved_by")
+    private String materialChangeApprovedBy;
+
+    @Column(name = "material_change_approved_at")
+    private Instant materialChangeApprovedAt;
+
+    @Column(name = "material_change_approved_rules_json", columnDefinition = "text")
+    private String materialChangeApprovedRulesJson;
+
     protected RoutingConfigVersion() {
     }
 
@@ -142,6 +151,27 @@ public class RoutingConfigVersion {
 
     public String getReason() {
         return reason;
+    }
+
+    public String getMaterialChangeApprovedBy() {
+        return materialChangeApprovedBy;
+    }
+
+    public Instant getMaterialChangeApprovedAt() {
+        return materialChangeApprovedAt;
+    }
+
+    public String getMaterialChangeApprovedRulesJson() {
+        return materialChangeApprovedRulesJson;
+    }
+
+    public void approveMaterialChange(String approvedBy, Instant approvedAt) {
+        if (status != ConfigVersionStatus.DRAFT) {
+            throw new IllegalStateException("Only draft routing configurations may receive material-change approval");
+        }
+        this.materialChangeApprovedBy = approvedBy;
+        this.materialChangeApprovedAt = approvedAt;
+        this.materialChangeApprovedRulesJson = rulesJson;
     }
 
     public void recordDryRun(Instant completedAt, boolean passed) {
