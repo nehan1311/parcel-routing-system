@@ -569,6 +569,7 @@ function ConfigPage({ credentials, onAuthInvalid, sharedState }) {
   const { form, setForm, draft, setDraft, validation, setValidation, dryRun, setDryRun, toast, setToast, busy, setBusy } = sharedState;
   const ready = validation?.valid && dryRun?.failedCases === 0;
   const [impactExpanded, setImpactExpanded] = useState(false);
+  const [boundaryExpanded, setBoundaryExpanded] = useState(false);
   const [ruleChangesExpanded, setRuleChangesExpanded] = useState(false);
   const [acknowledgedRuleChanges, setAcknowledgedRuleChanges] = useState(new Set());
   const [activationError, setActivationError] = useState("");
